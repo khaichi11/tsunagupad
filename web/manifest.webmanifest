@@ -1,0 +1,9 @@
+{
+  "name": "Tsunagu-Pad",
+  "short_name": "Tsunagu-Pad",
+  "description": "Layar Ubuntu di iPad",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}
