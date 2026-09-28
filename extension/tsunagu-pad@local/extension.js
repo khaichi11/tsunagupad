@@ -22,7 +22,9 @@ const RECEIVER_NAME = 'Tsunagu-Pad Ubuntu';
 const HOTSPOT_UNIT = 'tsunagupad-hotspot.service';
 const HOTSPOT_CONFIG_PATH = '/etc/tsunagupad/hotspot.conf';
 const HOTSPOT_HELPER = '/usr/local/lib/tsunagupad/hotspot-config';
-const QR_MODULE_PX = 5;
+/* Batas sisi QR dalam piksel. Ukuran modul dihitung dari batas ini supaya QR
+ * yang panjang (mis. kata sandi Wi-Fi) tidak melebihi lebar menu Quick Settings. */
+const QR_MAX_PX = 168;
 const QUALITIES = [
     ['hemat', 'Hemat (jaringan lemah)'],
     ['lancar', 'Lancar · 720p'],
@@ -250,7 +252,8 @@ class QrCode extends St.DrawingArea {
             return;
         this._text = rows;
         this._rows = rows ? rows.split(',') : [];
-        const size = (this._rows.length + 4) * QR_MODULE_PX;
+        const modules = this._rows.length + 4;   // termasuk margin putih 2 modul
+        const size = Math.max(2, Math.floor(QR_MAX_PX / modules)) * modules;
         this.set_size(size, size);
         this.queue_repaint();
     }
@@ -801,8 +804,7 @@ class TsunaguPadToggle extends QuickMenuToggle {
             }
         }
         this._hotspotQr.visible = this._hotspotQrText === text;
-        this._hotspotLabel.text = `Sambungkan iPad ke Wi-Fi “${config.ssid}”\n` +
-            `Kata sandi: ${config.password}\nWi-Fi utama laptop tetap tersambung.`;
+        this._hotspotLabel.text = `Wi-Fi “${config.ssid}”\nSandi: ${config.password}`;
     }
 
     _notify(message) {
