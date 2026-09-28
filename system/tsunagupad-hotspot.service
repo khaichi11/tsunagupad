@@ -1,0 +1,15 @@
+[Unit]
+Description=Tsunagu-Pad Wi-Fi hotspot (berjalan bersama Wi-Fi utama)
+Wants=NetworkManager.service
+After=NetworkManager.service
+
+[Service]
+# Skrip memberi tahu systemd setelah hotspot benar-benar memancar, jadi
+# "systemctl start" dari panel langsung tahu berhasil atau gagal.
+Type=notify
+NotifyAccess=all
+ExecStart=/usr/local/lib/tsunagupad/hotspot
+TimeoutStartSec=40
+TimeoutStopSec=15
+KillMode=mixed
+Restart=no

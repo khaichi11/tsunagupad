@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Simpan nama & kata sandi hotspot Tsunagu-Pad. Dipanggil panel lewat pkexec:
+#   pkexec hotspot-config "NAMA WIFI"   (kata sandi dibaca dari stdin)
+# Format berkas sengaja polos (KUNCI=nilai, tanpa kutip/escape) supaya panel
+# dan skrip hotspot membaca nilai yang persis sama.
+set -euo pipefail
+export LC_ALL=C PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+[[ $# -eq 1 ]] || { echo "Pemakaian: $0 NAMA_WIFI  (kata sandi lewat stdin)" >&2; exit 2; }
+ssid=$1
+IFS= read -r password || true
+[[ $ssid =~ ^[^[:cntrl:]]{1,32}$ ]] ||
+    { echo "Nama Wi-Fi harus 1-32 byte tanpa baris baru." >&2; exit 2; }
+[[ $password =~ ^[[:print:]]{8,63}$ ]] ||
+    { echo "Kata sandi harus 8-63 karakter ASCII (huruf, angka, simbol, spasi)." >&2; exit 2; }
+
+# Hanya root dan pengguna yang mengaturnya yang boleh membaca kata sandi.
+group=root
+if [[ -n ${PKEXEC_UID:-} ]]; then
+    group=$(id -gn "$PKEXEC_UID")
+fi
+
+install -d -m 755 /etc/tsunagupad
+tmp=$(mktemp /etc/tsunagupad/.hotspot.conf.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+printf '# Diatur dari panel Tsunagu-Pad\nSSID=%s\nPASSWORD=%s\n' "$ssid" "$password" >"$tmp"
+chown "root:$group" "$tmp"
+chmod 640 "$tmp"
+mv -f "$tmp" /etc/tsunagupad/hotspot.conf
+trap - EXIT
+
+if systemctl is-active --quiet tsunagupad-hotspot.service; then
+    systemctl restart tsunagupad-hotspot.service ||
+        { echo "Tersimpan, tetapi hotspot gagal menyala ulang. Cek: journalctl -u tsunagupad-hotspot" >&2; exit 1; }
+fi

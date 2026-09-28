@@ -1,0 +1,346 @@
+#!/usr/bin/env bash
+# Hotspot Tsunagu-Pad: access point virtual "ap0" di radio yang sama dengan Wi-Fi
+# utama, jadi laptop tetap tersambung internet. Dijalankan systemd sebagai root
+# (Type=notify) dan tetap hidup sebagai pengawas:
+#   - hostapd + dnsmasq berjalan sebagai proses anak;
+#   - channel hotspot selalu mengikuti Wi-Fi utama (radio hanya bisa 1 channel);
+#   - bila Wi-Fi utama tidak tersambung, hotspot tetap jalan di channel cadangan,
+#     dan sesekali mengalah supaya NetworkManager bisa menyambung ulang;
+#   - hemat daya Wi-Fi dimatikan selama hotspot aktif (mengurangi jeda ke iPad);
+#   - NAT, ip_forward, hemat daya, dan ap0 dikembalikan seperti semula saat berhenti.
+set -uo pipefail
+export LC_ALL=C PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+readonly AP=ap0
+readonly NET=10.88.0
+readonly CONFIG=/etc/tsunagupad/hotspot.conf
+readonly RUN=/run/tsunagupad-hotspot
+readonly FALLBACK_CHANNELS=(36 40 44 48 149 153 157 161 1 6 11)
+
+HOSTAPD_PID='' DNSMASQ_PID='' AP_FREQ='' AP_CHANNEL='' NAT_DEV='' WIFI='' PHY='' LAST_ERROR=''
+SSID='' PASSWORD='' POWERSAVE_BEFORE=''
+
+log() { printf '%s\n' "$*" >&2; }
+die() { log "$*"; exit 1; }
+
+read_config() {
+    [[ -r $CONFIG ]] || die "Konfigurasi hotspot tidak ada: $CONFIG (jalankan install.sh)."
+    local line
+    while IFS= read -r line || [[ -n $line ]]; do
+        case $line in
+            SSID=*) SSID=${line#SSID=} ;;
+            PASSWORD=*) PASSWORD=${line#PASSWORD=} ;;
+        esac
+    done <"$CONFIG"
+    [[ -n $SSID && ${#SSID} -le 32 ]] || die "Nama hotspot harus 1-32 byte."
+    [[ $PASSWORD =~ ^[[:print:]]{8,63}$ ]] || die "Kata sandi hotspot harus 8-63 karakter ASCII."
+}
+
+# Interface Wi-Fi client (bukan ap0).
+wifi_device() {
+    local path dev type
+    for path in /sys/class/net/*/phy80211; do
+        [[ -e $path ]] || continue
+        dev=${path%/phy80211}
+        dev=${dev##*/}
+        [[ $dev == "$AP" ]] && continue
+        type=$(iw dev "$dev" info 2>/dev/null | awk '$1 == "type" {print $2; exit}')
+        [[ $type == managed ]] && { printf '%s\n' "$dev"; return 0; }
+    done
+    return 1
+}
+
+# "channel frekuensi" Wi-Fi utama bila sedang tersambung; kosong bila tidak.
+uplink_channel() {
+    iw dev "$WIFI" info 2>/dev/null |
+        awk '$1 == "channel" { gsub(/\(/, "", $3); print $2, int($3); exit }'
+}
+
+# Izin channel (menurut regulasi) untuk dipakai AP: ok | no-ir | radar | disabled | unknown
+channel_state() {
+    iw phy "$PHY" channels 2>/dev/null | awk -v want="$1" '
+        /^[[:space:]]*\* [0-9.]+ MHz/ {
+            cur = (int($2) == want)
+            if (cur) state = ($0 ~ /disabled/) ? "disabled" : "ok"
+            next
+        }
+        cur && /No IR/ && state == "ok" { state = "no-ir" }
+        cur && /Radar detection/ && state != "disabled" { state = "radar" }
+        END { print (state == "" ? "unknown" : state) }'
+}
+
+channel_freq() {
+    iw phy "$PHY" channels 2>/dev/null | awk -v ch="[$1]" '
+        /^[[:space:]]*\* [0-9.]+ MHz/ && $4 == ch && int($2) < 5925 { print int($2); exit }'
+}
+
+fallback_channel() {
+    local ch freq
+    for ch in "${FALLBACK_CHANNELS[@]}"; do
+        freq=$(channel_freq "$ch")
+        if [[ -n $freq && $(channel_state "$freq") == ok ]]; then
+            printf '%s %s\n' "$ch" "$freq"
+            return
+        fi
+    done
+    printf '6 2437\n'
+}
+
+# MAC lokal yang pasti berbeda dari Wi-Fi utama.
+ap_mac() {
+    local mac
+    mac=$(<"/sys/class/net/$WIFI/address")
+    printf '%02x:%s\n' $(( ((16#${mac%%:*} | 0x02) & 0xfe) ^ 0x04 )) "${mac#*:}"
+}
+
+ap_create() {
+    [[ -e /sys/class/net/$AP ]] && iw dev "$AP" del 2>/dev/null
+    iw phy "$PHY" interface add "$AP" type __ap ||
+        die "Kartu Wi-Fi ini tidak bisa membuat hotspot sambil tetap tersambung Wi-Fi."
+    ip link set dev "$AP" address "$(ap_mac)" 2>/dev/null || true
+    nmcli device set "$AP" managed no >/dev/null 2>&1 || true
+    ip addr replace "$NET.1/24" dev "$AP"
+}
+
+write_hostapd() {
+    local channel=$1 freq=$2 mode=g vht=''
+    if (( freq >= 5000 )); then
+        mode=a
+        vht=$'ieee80211ac=1\n'
+    fi
+    local ssid_hex
+    ssid_hex=$(printf '%s' "$SSID" | od -An -tx1 -v | tr -d ' \n')
+    (umask 077; cat >"$RUN/hostapd.conf" <<EOF
+interface=$AP
+driver=nl80211
+ssid2=$ssid_hex
+utf8_ssid=1
+hw_mode=$mode
+channel=$channel
+ieee80211n=1
+${vht}wmm_enabled=1
+auth_algs=1
+wpa=2
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+wpa_passphrase=$PASSWORD
+EOF
+    )
+}
+
+write_dnsmasq() {
+    cat >"$RUN/dnsmasq.conf" <<EOF
+interface=$AP
+except-interface=lo
+bind-interfaces
+port=0
+dhcp-authoritative
+dhcp-range=$NET.20,$NET.200,255.255.255.0,12h
+dhcp-option=option:router,$NET.1
+dhcp-option=option:dns-server,1.1.1.1,8.8.8.8
+dhcp-leasefile=$RUN/dnsmasq.leases
+EOF
+}
+
+stop_children() {
+    local pid
+    for pid in "$HOSTAPD_PID" "$DNSMASQ_PID"; do
+        [[ -n $pid ]] && kill "$pid" 2>/dev/null
+    done
+    for pid in "$HOSTAPD_PID" "$DNSMASQ_PID"; do
+        [[ -n $pid ]] && wait "$pid" 2>/dev/null
+    done
+    HOSTAPD_PID='' DNSMASQ_PID='' AP_FREQ='' AP_CHANNEL=''
+}
+
+wait_beacon() {
+    local i
+    for (( i = 0; i < 60; i++ )); do
+        kill -0 "$HOSTAPD_PID" 2>/dev/null || return 1
+        iw dev "$AP" info 2>/dev/null | grep -q '^[[:space:]]*ssid ' && return 0
+        sleep 0.25
+    done
+    return 1
+}
+
+start_ap() {
+    stop_children
+    ap_create
+    write_hostapd "$1" "$2"
+    hostapd "$RUN/hostapd.conf" &
+    HOSTAPD_PID=$!
+    if ! wait_beacon; then
+        stop_children
+        return 1
+    fi
+    # dnsmasq terikat ke ifindex ap0, jadi ikut dimulai ulang tiap ap0 dibuat.
+    write_dnsmasq
+    dnsmasq --keep-in-foreground --conf-file="$RUN/dnsmasq.conf" &
+    DNSMASQ_PID=$!
+    AP_CHANNEL=$1
+    AP_FREQ=$2
+    log "Hotspot \"$SSID\" aktif di channel $1 ($2 MHz)."
+}
+
+# Channel AP wajib sama dengan Wi-Fi utama; bila tidak tersambung pakai cadangan.
+start_best() {
+    local up ch freq
+    up=$(uplink_channel)
+    if [[ -n $up ]]; then
+        read -r ch freq <<<"$up"
+        case $(channel_state "$freq") in
+            radar)
+                LAST_ERROR="Wi-Fi utama memakai channel DFS $ch; hotspot bersamaan tidak diizinkan di channel itu. Sambungkan laptop ke Wi-Fi 2.4 GHz atau channel 36-48/149-165, atau putuskan Wi-Fi utama."
+                return 1 ;;
+            disabled)
+                LAST_ERROR="Channel Wi-Fi utama ($ch) tidak diizinkan untuk hotspot."
+                return 1 ;;
+        esac
+    else
+        read -r ch freq <<<"$(fallback_channel)"
+    fi
+    start_ap "$ch" "$freq" || {
+        LAST_ERROR="hostapd gagal menyalakan hotspot di channel $ch (lihat log hostapd di atas)."
+        return 1
+    }
+}
+
+default_dev() {
+    ip -4 route show default 2>/dev/null |
+        awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }'
+}
+
+nat_clear() {
+    [[ -n $NAT_DEV ]] || return 0
+    iptables -t nat -D POSTROUTING -s "$NET.0/24" -o "$NAT_DEV" -j MASQUERADE 2>/dev/null
+    iptables -D FORWARD -i "$AP" -o "$NAT_DEV" -j ACCEPT 2>/dev/null
+    iptables -D FORWARD -i "$NAT_DEV" -o "$AP" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null
+    NAT_DEV=''
+}
+
+# Hapus sisa aturan dari sesi sebelumnya yang mati mendadak.
+nat_purge() {
+    local rule args
+    while IFS= read -r rule; do
+        read -ra args <<<"${rule/-A /-D }"
+        iptables -t nat "${args[@]}" 2>/dev/null
+    done < <(iptables -t nat -S POSTROUTING 2>/dev/null | grep -F -- "-s $NET.0/24")
+    while IFS= read -r rule; do
+        read -ra args <<<"${rule/-A /-D }"
+        iptables "${args[@]}" 2>/dev/null
+    done < <(iptables -S FORWARD 2>/dev/null | grep -E -- "-(i|o) $AP( |$)")
+}
+
+# Internet untuk iPad lewat interface default laptop (Wi-Fi, Ethernet, tethering).
+nat_sync() {
+    local dev
+    dev=$(default_dev)
+    [[ $dev == "$AP" ]] && dev=''
+    [[ $dev == "$NAT_DEV" ]] && return 0
+    nat_clear
+    [[ -n $dev ]] || return 0
+    iptables -t nat -A POSTROUTING -s "$NET.0/24" -o "$dev" -j MASQUERADE
+    iptables -I FORWARD -i "$AP" -o "$dev" -j ACCEPT
+    iptables -I FORWARD -i "$dev" -o "$AP" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    NAT_DEV=$dev
+}
+
+forward_on() {
+    [[ -f $RUN/ip_forward ]] || cp /proc/sys/net/ipv4/ip_forward "$RUN/ip_forward"
+    sysctl -qw net.ipv4.ip_forward=1
+}
+
+forward_restore() {
+    [[ -f $RUN/ip_forward ]] && sysctl -qw "net.ipv4.ip_forward=$(<"$RUN/ip_forward")"
+}
+
+# Hemat daya membuat radio tidur sesaat; karena AP dan Wi-Fi utama berbagi radio,
+# paket ke iPad ikut tertahan puluhan-ratusan ms. NetworkManager bisa menyalakannya
+# lagi saat menyambung ulang, jadi dicek ulang tiap putaran.
+powersave_off() {
+    local state
+    state=$(iw dev "$WIFI" get power_save 2>/dev/null | awk '{print $NF}')
+    [[ -z $POWERSAVE_BEFORE && -n $state ]] && POWERSAVE_BEFORE=$state
+    [[ $state == on ]] && iw dev "$WIFI" set power_save off 2>/dev/null
+    return 0
+}
+
+powersave_restore() {
+    [[ -n $WIFI && $POWERSAVE_BEFORE == on ]] && iw dev "$WIFI" set power_save on 2>/dev/null
+    return 0
+}
+
+cleanup() {
+    trap - EXIT
+    stop_children
+    nat_clear
+    nat_purge
+    forward_restore
+    powersave_restore
+    iw dev "$AP" del 2>/dev/null
+    rm -rf "$RUN"
+}
+
+notify() {
+    command -v systemd-notify >/dev/null && systemd-notify "$@" 2>/dev/null
+    return 0
+}
+
+nm_connecting() {
+    nmcli -t -f DEVICE,STATE device 2>/dev/null | grep -q "^$WIFI:connecting"
+}
+
+main() {
+    read_config
+    WIFI=$(wifi_device) || die "Kartu Wi-Fi tidak ditemukan."
+    PHY=$(<"/sys/class/net/$WIFI/phy80211/name")
+    mkdir -p "$RUN" && chmod 700 "$RUN"
+    trap cleanup EXIT
+    trap 'exit 0' TERM INT
+
+    nat_purge
+    forward_on
+    start_best || die "$LAST_ERROR"
+    nat_sync
+    powersave_off
+    notify --ready --status="Hotspot aktif di channel $AP_CHANNEL"
+
+    local up ch freq failures=0 started=$SECONDS last_yield=-600 i
+    while true; do
+        sleep 3 &
+        wait $!
+        nat_sync
+        powersave_off
+
+        if [[ -z $HOSTAPD_PID ]] || ! kill -0 "$HOSTAPD_PID" 2>/dev/null; then
+            (( SECONDS - started > 60 )) && failures=0
+            (( ++failures > 5 )) && die "hostapd berhenti berulang kali; hotspot dimatikan."
+            log "Hotspot berhenti; menyalakan ulang…"
+            start_best && started=$SECONDS || log "$LAST_ERROR"
+            continue
+        fi
+
+        up=$(uplink_channel)
+        if [[ -n $up ]]; then
+            read -r ch freq <<<"$up"
+            if [[ $freq != "$AP_FREQ" ]]; then
+                log "Wi-Fi utama pindah ke channel $ch; hotspot ikut pindah."
+                start_best && started=$SECONDS || log "$LAST_ERROR"
+            fi
+        elif nm_connecting && (( SECONDS - last_yield > 60 )); then
+            # Radio hanya bisa satu channel: beri NetworkManager kesempatan
+            # menyambung ke Wi-Fi yang mungkin ada di channel lain.
+            last_yield=$SECONDS
+            log "Wi-Fi utama sedang menyambung; hotspot mengalah sebentar."
+            stop_children
+            for (( i = 0; i < 10; i++ )); do
+                sleep 2 &
+                wait $!
+                [[ -n $(uplink_channel) ]] && break
+            done
+            start_best && started=$SECONDS || log "$LAST_ERROR"
+        fi
+    done
+}
+
+main "$@"
