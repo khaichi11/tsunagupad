@@ -1,0 +1,7 @@
+{
+  "uuid": "tsunagu-pad@local",
+  "name": "Tsunagu-Pad",
+  "description": "Satukan layar Ubuntu dan iPad. Bagikan layar Ubuntu ke iPad (sentuh & Apple Pencil) atau tampilkan layar iPad di Ubuntu lewat AirPlay, langsung dari Quick Settings.",
+  "shell-version": ["45", "46", "47", "48"],
+  "version": 1
+}
