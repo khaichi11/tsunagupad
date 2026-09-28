@@ -106,6 +106,25 @@ hotspot bersamaan tidak diizinkan oleh regulasi, dan panel menjelaskan apa yang
 perlu dilakukan. Nama dan kata sandinya dibuat saat pemasangan dan bisa diubah
 dari menu.
 
+### Lewat Tailscale
+
+Bila jaringan memblokir lalu lintas antar perangkat dan hotspot langsung tidak
+memungkinkan, Tailscale bisa dipakai sebagai jalurnya. Pasang Tailscale di
+Ubuntu dan aplikasi Tailscale di iPad, masuk ke tailnet yang sama, lalu buka
+alamat `100.x.y.z` yang ditampilkan panel pada daftar alamat lain. Tsunagu-Pad
+mengutamakan alamat Tailscale untuk QR bila tunnel-nya hidup.
+
+```bash
+sudo apt install tailscale
+sudo tailscale up
+```
+
+Tidak ada yang perlu diubah lagi: kode akses tetap berlaku dan tidak ada port
+yang perlu dibuka ke internet. Latensinya lebih tinggi daripada jaringan lokal,
+terutama bila Tailscale tidak mendapat sambungan langsung dan memakai relay.
+Arah AirPlay tidak bisa lewat Tailscale, karena iPadOS mencari penerima di
+jaringan lokal.
+
 ## Kualitas dan latensi
 
 Tersedia empat pilihan, dari lebar 960 piksel pada 30 frame per detik sampai

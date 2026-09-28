@@ -106,6 +106,25 @@ connection uses a DFS channel, a simultaneous hotspot is not allowed by
 regulation and the panel explains what to do. The name and the password are
 generated during installation and can be changed from the menu.
 
+### Over Tailscale
+
+If the network blocks device to device traffic and the direct hotspot is not an
+option, Tailscale works as the transport. Install Tailscale on Ubuntu and the
+Tailscale app on the iPad, sign both into the same tailnet, then open the
+`100.x.y.z` address that the panel lists under the other addresses. Tsunagu-Pad
+prefers the Tailscale address for the QR code when the tunnel is up.
+
+```bash
+sudo apt install tailscale
+sudo tailscale up
+```
+
+Nothing else needs to change: the access key still applies, and no port has to
+be exposed to the internet. Expect more latency than on a local network,
+especially when Tailscale cannot reach a direct connection and falls back to a
+relay. The AirPlay direction does not work over Tailscale, because iPadOS looks
+for the receiver on the local network.
+
 ## Quality and latency
 
 Four presets are available, from 960 pixels wide at 30 frames per second up to
