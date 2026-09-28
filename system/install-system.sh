@@ -88,6 +88,13 @@ rm -f /etc/systemd/system/ichipad-*.service /etc/polkit-1/rules.d/60-ichipad*.ru
     /etc/modules-load.d/ichipad-uinput.conf
 rm -rf /etc/ichipad /usr/local/lib/ichipad
 
+# hostapd/dnsmasq dari versi lama bisa tertinggal hidup dan memegang radio
+# Wi-Fi, sehingga hotspot baru gagal dengan "Could not configure driver mode".
+pkill -f '/run/ichipad-hotspot/hostapd.conf' 2>/dev/null || true
+pkill -f '/run/ichipad-hotspot/dnsmasq.conf' 2>/dev/null || true
+rm -rf /run/ichipad-hotspot
+iw dev ap0 del 2>/dev/null || true
+
 install -Dm755 system/tsunagupad-hotspot /usr/local/lib/tsunagupad/hotspot
 install -Dm755 system/tsunagupad-hotspot-config /usr/local/lib/tsunagupad/hotspot-config
 install -Dm644 system/tsunagupad-hotspot.service /etc/systemd/system/tsunagupad-hotspot.service
