@@ -50,7 +50,16 @@ static void http_handler(SoupServer *server, SoupServerMessage *msg, const char 
         return;
     }
 
-    char *file = g_build_filename(app->web_dir, path, NULL);
+    /* Tombol pintasan boleh diatur pengguna di ~/.config/tsunagupad/shortcuts.json;
+     * bila tidak ada, dipakai berkas bawaan dari folder web. */
+    char *file = NULL;
+    if (g_strcmp0(path, "/shortcuts.json") == 0) {
+        file = g_build_filename(g_get_user_config_dir(), "tsunagupad", "shortcuts.json", NULL);
+        if (!g_file_test(file, G_FILE_TEST_EXISTS))
+            g_clear_pointer(&file, g_free);
+    }
+    if (!file)
+        file = g_build_filename(app->web_dir, path, NULL);
     char *data = NULL;
     gsize len = 0;
     gboolean found = g_file_get_contents(file, &data, &len, NULL);

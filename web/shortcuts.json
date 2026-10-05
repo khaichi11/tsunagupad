@@ -1,0 +1,28 @@
+{
+  "comment": "Tombol pintasan di layar iPad. Salin ke ~/.config/tsunagupad/shortcuts.json untuk mengubahnya tanpa menimpa berkas bawaan. Isi 'keys' memakai nama tombol: a-z, 0-9, escape, enter, space, tab, equal, minus, bracketleft, bracketright, left, right, up, down, pageup, pagedown, delete, backspace, dengan awalan ctrl+, shift+, alt+. Entri {\"sep\": true} membuat garis pemisah, {\"mod\": \"shift\"} membuat tombol modifier yang menempel untuk satu sentuhan berikutnya.",
+  "buttons": [
+    { "label": "Undo", "keys": "ctrl+z" },
+    { "label": "Redo", "keys": "ctrl+shift+z" },
+    { "sep": true },
+    { "label": "Merah", "keys": "a" },
+    { "label": "Biru", "keys": "s" },
+    { "label": "→ M", "keys": "shift+a" },
+    { "label": "→ B", "keys": "shift+s" },
+    { "sep": true },
+    { "label": "Geser", "keys": "g" },
+    { "label": "Blok", "keys": "x" },
+    { "label": "Titik", "keys": "escape" },
+    { "sep": true },
+    { "label": "Prev", "keys": "d" },
+    { "label": "Next", "keys": "space" },
+    { "label": "OK", "keys": "enter" },
+    { "sep": true },
+    { "label": "Zoom +", "keys": "equal" },
+    { "label": "Zoom -", "keys": "minus" },
+    { "label": "Muat", "keys": "0" },
+    { "sep": true },
+    { "mod": "shift" },
+    { "mod": "ctrl" },
+    { "mod": "alt" }
+  ]
+}

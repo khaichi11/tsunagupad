@@ -32,6 +32,7 @@ const STRINGS = {
     fullscreen: 'Full screen',
     info: 'Info',
     reconnect: 'Reconnect',
+    shortcuts: 'Shortcuts',
     tagline: 'REMOTE DISPLAY',
     touch_mouse: 'Touch: Mouse',
     touch_scroll: 'Touch: Scroll',
@@ -56,6 +57,7 @@ const STRINGS = {
     fullscreen: 'Layar penuh',
     info: 'Info',
     reconnect: 'Sambung ulang',
+    shortcuts: 'Pintasan',
     tagline: 'LAYAR JARAK JAUH',
     touch_mouse: 'Sentuh: Mouse',
     touch_scroll: 'Sentuh: Gulir',
@@ -464,6 +466,7 @@ surface.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   collapseToolbar();
   if (!canControl()) return;
+  pressStickyMods();
 
   if (e.pointerType === 'pen') {
     cancelTouches();
@@ -502,6 +505,7 @@ function endPointer(e) {
   } else {
     touchUp(e);
   }
+  releaseStickyMods();
 }
 
 surface.addEventListener('pointerup', endPointer);
@@ -641,6 +645,102 @@ $('btn-info').addEventListener('click', () => {
 $('btn-reconnect').addEventListener('click', () => {
   collapseToolbar();
   connect();
+});
+
+/* ---------- bar pintasan (tambahan, bawaannya tersembunyi) ---------- */
+
+const keybar = $('keybar');
+
+const KEY_CODES = {
+  escape: 'Escape', enter: 'Enter', space: 'Space', tab: 'Tab', equal: 'Equal', minus: 'Minus',
+  bracketleft: 'BracketLeft', bracketright: 'BracketRight', left: 'ArrowLeft', right: 'ArrowRight',
+  up: 'ArrowUp', down: 'ArrowDown', pageup: 'PageUp', pagedown: 'PageDown',
+  delete: 'Delete', backspace: 'Backspace', home: 'Home', end: 'End',
+};
+const MOD_CODES = { shift: 'ShiftLeft', ctrl: 'ControlLeft', alt: 'AltLeft' };
+const MOD_LABELS = { shift: 'Shift', ctrl: 'Ctrl', alt: 'Alt' };
+
+function keyCode(name) {
+  if (KEY_CODES[name]) return KEY_CODES[name];
+  if (/^[a-z]$/.test(name)) return `Key${name.toUpperCase()}`;
+  if (/^[0-9]$/.test(name)) return `Digit${name}`;
+  return null;
+}
+
+function pressCombo(spec) {
+  const parts = String(spec).toLowerCase().split('+').filter(Boolean);
+  const base = keyCode(parts.pop());
+  if (!base) return;
+  const mods = parts.map((m) => MOD_CODES[m]).filter(Boolean);
+  for (const m of mods) sendKey('down', m, m);
+  sendKey('down', base, base);
+  sendKey('up', base, base);
+  for (const m of mods.reverse()) sendKey('up', m, m);
+}
+
+/* Modifier yang menempel: ditekan untuk sentuhan berikutnya, lalu dilepas.
+   Berguna untuk Shift+klik, Ctrl+tarik, dan Alt+tarik tanpa keyboard. */
+const stickyMods = new Set();
+
+function renderSticky() {
+  for (const btn of keybar.querySelectorAll('[data-mod]')) {
+    btn.style.background = stickyMods.has(btn.dataset.mod) ? 'var(--accent)' : '';
+    btn.style.color = stickyMods.has(btn.dataset.mod) ? 'var(--ink)' : '';
+  }
+}
+
+function pressStickyMods() {
+  for (const m of stickyMods) sendKey('down', MOD_CODES[m], MOD_CODES[m]);
+}
+
+function releaseStickyMods() {
+  if (!stickyMods.size) return;
+  for (const m of stickyMods) sendKey('up', MOD_CODES[m], MOD_CODES[m]);
+  stickyMods.clear();
+  renderSticky();
+}
+
+function buildKeybar(buttons) {
+  keybar.textContent = '';
+  for (const item of buttons) {
+    if (item.sep) {
+      const sep = document.createElement('div');
+      sep.className = 'keybar-sep';
+      keybar.appendChild(sep);
+      continue;
+    }
+    const btn = document.createElement('button');
+    if (item.mod && MOD_CODES[item.mod]) {
+      btn.dataset.mod = item.mod;
+      btn.textContent = MOD_LABELS[item.mod];
+      btn.addEventListener('click', () => {
+        if (stickyMods.has(item.mod)) stickyMods.delete(item.mod);
+        else stickyMods.add(item.mod);
+        renderSticky();
+      });
+    } else if (item.keys) {
+      btn.textContent = item.label || item.keys;
+      btn.addEventListener('click', () => {
+        if (canControl()) pressCombo(item.keys);
+      });
+    } else {
+      continue;
+    }
+    keybar.appendChild(btn);
+  }
+  renderSticky();
+}
+
+fetch('shortcuts.json')
+  .then((r) => r.json())
+  .then((cfg) => buildKeybar(Array.isArray(cfg) ? cfg : cfg.buttons || []))
+  .catch(() => { $('btn-keys').hidden = true; });
+
+keybar.hidden = store.get('tsunagupad.keybar') !== '1';
+$('btn-keys').addEventListener('click', () => {
+  keybar.hidden = !keybar.hidden;
+  store.set('tsunagupad.keybar', keybar.hidden ? '0' : '1');
+  keepToolbarOpen();
 });
 
 /* ---------- mulai ---------- */
