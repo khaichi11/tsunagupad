@@ -321,6 +321,15 @@ const canControl = () => info?.input && ws && ws.readyState === WebSocket.OPEN;
 let penDown = false;
 let penLastUse = 0;
 
+const penDot = $('pen-dot');
+let lastPointer = null;   // posisi layar terakhir, dipakai tombol klik di bar
+
+function movePenDot(e) {
+  lastPointer = { x: e.clientX, y: e.clientY };
+  penDot.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+  penDot.hidden = false;
+}
+
 function sendPen(kind, events) {
   const pts = events.map((e) => {
     const [x, y] = norm(e.clientX, e.clientY);
@@ -328,6 +337,8 @@ function sendPen(kind, events) {
   });
   send({ type: 'pen', e: kind, pts });
   penLastUse = performance.now();
+  if (kind === 'leave') penDot.hidden = true;
+  else if (events.length) movePenDot(events[events.length - 1]);
 }
 
 /* ---------- mouse & trackpad ---------- */
@@ -335,6 +346,7 @@ function sendPen(kind, events) {
 const BUTTONS = { 0: 1, 1: 2, 2: 3 };
 
 function sendMouseAt(kind, clientX, clientY, button) {
+  lastPointer = { x: clientX, y: clientY };
   const [x, y] = norm(clientX, clientY);
   const msg = { type: 'mouse', e: kind, x, y };
   if (button) msg.b = button;
@@ -355,6 +367,8 @@ const TOUCH_MODES = ['mouse', 'scroll', 'off'];
 const TAP_SLOP = 10;
 const LONG_PRESS_MS = 550;
 const SCROLL_STEP = 40;   // piksel jari per satu klik roda
+const PINCH_SLOP = 12;    // perubahan jarak dua jari sebelum dianggap cubit
+const PINCH_STEP = 45;    // piksel cubitan per satu langkah zoom
 
 let touchMode = TOUCH_MODES.includes(store.get('tsunagupad.touch'))
   ? store.get('tsunagupad.touch') : 'mouse';
@@ -398,8 +412,25 @@ function touchDown(e) {
     if (gesture?.kind === 'drag') sendMouseAt('up', gesture.lastX, gesture.lastY, 1);
     clearTimeout(gesture?.timer);
     const c = centroid();
-    gesture = { kind: 'two', sx: c.x, sy: c.y, cx: c.x, cy: c.y, moved: false, t0: performance.now() };
+    gesture = {
+      kind: 'two', sx: c.x, sy: c.y, cx: c.x, cy: c.y, moved: false, t0: performance.now(),
+      dist: touchSpread(), zoomAcc: 0,
+    };
   }
+}
+
+function touchSpread() {
+  const list = [...touches.values()];
+  if (list.length < 2) return 0;
+  return Math.hypot(list[0].x - list[1].x, list[0].y - list[1].y);
+}
+
+/* Satu langkah zoom: Ctrl ditekan, roda digerakkan, lalu Ctrl dilepas. */
+function zoomWheel(dy, at) {
+  const [x, y] = norm(at.x, at.y);
+  sendKey('down', 'ControlLeft', 'ControlLeft');
+  send({ type: 'scroll', dx: 0, dy, x, y });
+  sendKey('up', 'ControlLeft', 'ControlLeft');
 }
 
 function scrollBy(dx, dy, at) {
@@ -415,6 +446,21 @@ function touchMove(e) {
 
   if (gesture.kind === 'two') {
     const c = centroid();
+    const spread = touchSpread();
+    const pinch = spread - gesture.dist;
+    if (Math.abs(pinch) > PINCH_SLOP) {
+      // Cubit untuk zoom: aplikasi di Ubuntu memakai Ctrl dan roda untuk zoom.
+      gesture.moved = true;
+      gesture.zoomAcc += pinch;
+      gesture.dist = spread;
+      while (Math.abs(gesture.zoomAcc) >= PINCH_STEP) {
+        zoomWheel(gesture.zoomAcc > 0 ? -1 : 1, c);
+        gesture.zoomAcc += gesture.zoomAcc > 0 ? -PINCH_STEP : PINCH_STEP;
+      }
+      gesture.cx = c.x;
+      gesture.cy = c.y;
+      return;
+    }
     if (Math.hypot(c.x - gesture.sx, c.y - gesture.sy) > TAP_SLOP) gesture.moved = true;
     if (gesture.moved) {
       scrollBy(c.x - gesture.cx, c.y - gesture.cy, c);
@@ -722,6 +768,14 @@ function buildKeybar(buttons) {
       btn.textContent = item.label || item.keys;
       btn.addEventListener('click', () => {
         if (canControl()) pressCombo(item.keys);
+      });
+    } else if (item.click) {
+      /* Klik di posisi Pencil terakhir, untuk aksi yang butuh klik kanan
+         atau tengah tanpa gestur dua jari. */
+      const button = { left: 1, middle: 2, right: 3 }[item.click] ?? 3;
+      btn.textContent = item.label || item.click;
+      btn.addEventListener('click', () => {
+        if (canControl() && lastPointer) sendMouseAt('click', lastPointer.x, lastPointer.y, button);
       });
     } else {
       continue;

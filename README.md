@@ -6,6 +6,23 @@ to any server, and no app has to be installed on the iPad.
 
 English | [Bahasa Indonesia](README.id.md)
 
+## Demo
+
+![Ubuntu screen shared to the iPad](docs/media/demo-share.gif)
+
+The Ubuntu screen appears on the iPad, and touch, Apple Pencil, mouse, and
+keyboard from the iPad drive Ubuntu. Drawing on the iPad lands in the Ubuntu
+application at once.
+
+![iPad screen shown on Ubuntu through AirPlay](docs/media/demo-airplay.gif)
+
+The other direction: the iPad screen is shown on Ubuntu through AirPlay, using
+the Screen Mirroring button that iPadOS already has.
+
+Both animations are drawn by [docs/make_demo.py](docs/make_demo.py), not
+recorded from a real desktop, so no private screen content is published here.
+Run `python3 docs/make_demo.py` to rebuild them.
+
 ## What it does
 
 - **Share the Ubuntu screen to the iPad.** A monitor of your choice is encoded

@@ -7,6 +7,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color:
 /* Pointer iPad disembunyikan di area video agar tidak ada dua kursor saat
    mouse atau trackpad dipakai; kursor Ubuntu dari video tetap terlihat. */
 #surface { position: fixed; inset: 0; touch-action: none; cursor: none; }
+/* Titik bidik lokal yang mengikuti ujung Pencil, digambar di iPad supaya
+   terasa menempel walau kursor Ubuntu di video datang beberapa milidetik lagi. */
+#pen-dot { position: fixed; left: 0; top: 0; width: 22px; height: 22px; margin: -11px 0 0 -11px; border: 2px solid var(--accent); border-radius: 50%; box-shadow: 0 0 0 1px rgba(0, 0, 0, .65) inset, 0 0 0 1px rgba(0, 0, 0, .45); pointer-events: none; z-index: 6; opacity: .9; }
+#pen-dot::after { content: ""; position: absolute; left: 9px; top: 9px; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); }
 #keybar { position: fixed; left: max(6px, env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 6px; padding: 8px 6px; border: 1px solid var(--panel-border); border-radius: 14px; background: rgba(21, 27, 36, .94); box-shadow: 0 12px 28px rgba(0, 0, 0, .38); z-index: 5; touch-action: manipulation; max-height: calc(100vh - 32px); overflow-y: auto; }
 #keybar button { min-width: 52px; min-height: 44px; padding: 6px 10px; border: 1px solid var(--panel-border); border-radius: 10px; background: #1b2330; color: var(--fg); font: inherit; font-size: 14px; font-weight: 600; }
 #keybar button:active { background: var(--accent); color: var(--ink); }

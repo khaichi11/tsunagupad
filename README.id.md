@@ -7,6 +7,23 @@ di iPad.
 
 [English](README.md) | Bahasa Indonesia
 
+## Demo
+
+![Layar Ubuntu dibagikan ke iPad](docs/media/demo-share-id.gif)
+
+Layar Ubuntu tampil di iPad, dan sentuhan, Apple Pencil, mouse, serta keyboard
+dari iPad mengendalikan Ubuntu. Menggambar di iPad langsung masuk ke aplikasi
+yang berjalan di Ubuntu.
+
+![Layar iPad tampil di Ubuntu lewat AirPlay](docs/media/demo-airplay-id.gif)
+
+Arah sebaliknya: layar iPad tampil di Ubuntu lewat AirPlay, memakai tombol
+Pencerminan Layar yang memang sudah ada di iPadOS.
+
+Kedua animasi digambar oleh [docs/make_demo.py](docs/make_demo.py), bukan
+rekaman layar sungguhan, jadi tidak ada isi layar pribadi yang ikut
+dipublikasikan. Jalankan `python3 docs/make_demo.py` untuk membuatnya ulang.
+
 ## Fungsi
 
 - **Bagikan layar Ubuntu ke iPad.** Monitor pilihan Anda di-encode dengan H.264
