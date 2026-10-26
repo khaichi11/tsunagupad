@@ -14,12 +14,15 @@
 
 typedef struct _Input Input;
 typedef struct _Client Client;
+typedef struct _Portal Portal;
 
 typedef struct {
     /* opsi dari command line */
     guint port;
-    int rx, ry, rw, rh;         /* area layar yang dibagikan (koordinat root X11) */
+    int rx, ry, rw, rh;         /* area layar yang dibagikan (koordinat root X11; di Wayland: 0,0 dan ukuran layar) */
     gboolean have_region;
+    char *backend;              /* auto | x11 | portal */
+    Portal *portal;             /* sesi Wayland (xdg-desktop-portal); NULL di sesi X11 */
     char *quality;              /* hemat | lancar | seimbang | tajam */
     char *encoder;              /* auto | nvidia | intel | cpu */
     char *pen_mode;             /* auto | tablet | mouse */
@@ -69,6 +72,19 @@ gboolean encoder_can_retune(const char *name);
 
 /* playout.c */
 void playout_delay_attach(GstElement *payloader);
+
+/* portal.c: tangkap layar dan masukan di sesi Wayland (xdg-desktop-portal) */
+Portal *portal_open(App *app, GError **error);   /* menunggu jendela izin GNOME */
+void portal_free(Portal *p);
+int portal_pipewire_fd(Portal *p);
+guint portal_node(Portal *p);
+void portal_geometry(Portal *p, int *x, int *y, int *w, int *h);
+gboolean portal_can_control(Portal *p);
+void portal_motion(Portal *p, double x, double y);              /* piksel di dalam layar yang dibagikan */
+void portal_button(Portal *p, int evdev, gboolean down);
+void portal_axis(Portal *p, int axis, int steps);               /* 0 vertikal, 1 horizontal; positif = bawah/kanan */
+void portal_key(Portal *p, int evdev, gboolean down);
+void portal_keysym(Portal *p, guint32 keysym, gboolean down);
 
 /* input.c */
 Input *input_new(App *app);

@@ -317,6 +317,7 @@ static int cmd_share(int argc, char **argv)
     app.quality = "lancar";
     app.encoder = "auto";
     app.pen_mode = "auto";
+    app.backend = "auto";
 
     GOptionEntry entries[] = {
         { "port", 'p', 0, G_OPTION_ARG_INT, &port, "Port HTTP (bawaan 8765)", "PORT" },
@@ -324,6 +325,7 @@ static int cmd_share(int argc, char **argv)
         { "quality", 'q', 0, G_OPTION_ARG_STRING, &app.quality, "hemat | lancar | seimbang | tajam", "Q" },
         { "encoder", 'e', 0, G_OPTION_ARG_STRING, &app.encoder, "auto | nvidia | intel-lp | intel | cpu", "ENC" },
         { "pen", 0, 0, G_OPTION_ARG_STRING, &app.pen_mode, "Apple Pencil: auto | tablet | mouse", "MODE" },
+        { "backend", 0, 0, G_OPTION_ARG_STRING, &app.backend, "Tangkap layar: auto | x11 | portal (Wayland)", "B" },
         { "no-input", 0, 0, G_OPTION_ARG_NONE, &no_input, "iPad hanya menonton, tanpa kontrol", NULL },
         { "test-source", 0, 0, G_OPTION_ARG_NONE, &app.test_source, "Pola uji, bukan layar asli", NULL },
         { "web-dir", 0, 0, G_OPTION_ARG_FILENAME, &web_dir, "Folder halaman web iPad", "DIR" },
@@ -348,7 +350,33 @@ static int cmd_share(int argc, char **argv)
     if (preset < 0)
         return fail("Kualitas tidak dikenal (pilih hemat, lancar, seimbang, atau tajam)");
 
-    if (region) {
+    if (!g_str_equal(app.backend, "auto") && !g_str_equal(app.backend, "x11") && !g_str_equal(app.backend, "portal"))
+        return fail("Backend tidak dikenal (pilih auto, x11, atau portal)");
+    gboolean use_portal = g_str_equal(app.backend, "portal") ||
+        (g_str_equal(app.backend, "auto") && !app.test_source && !region &&
+         g_strcmp0(g_getenv("XDG_SESSION_TYPE"), "wayland") == 0);
+
+    /* Encoder dicek dulu supaya jendela izin GNOME tidak muncul bila ternyata tidak bisa jalan. */
+    stop_stale(match_share, NULL);
+    app.enc_name = encoder_pick(app.encoder);
+    if (!app.enc_name)
+        return fail("Tidak ada encoder H.264 yang jalan. Jalankan install.sh untuk memasang plugin GStreamer.");
+
+    if (use_portal) {
+        GstElementFactory *pw = gst_element_factory_find("pipewiresrc");
+        if (!pw)
+            return fail("Plugin GStreamer untuk PipeWire belum terpasang. Jalankan install.sh (atau: sudo apt install gstreamer1.0-pipewire)");
+        gst_object_unref(pw);
+        GError *perr = NULL;
+        app.portal = portal_open(&app, &perr);
+        if (!app.portal)
+            return fail(perr ? perr->message : "Sesi layar Wayland gagal dibuka");
+        int px, py;
+        portal_geometry(app.portal, &px, &py, &app.rw, &app.rh);
+        app.rx = app.ry = 0;
+        if (app.rw < 16 || app.rh < 16)
+            return fail("Ukuran layar dari portal tidak valid");
+    } else if (region) {
         if (sscanf(region, "%d,%d,%d,%d", &app.rx, &app.ry, &app.rw, &app.rh) != 4 || app.rw < 16 || app.rh < 16)
             return fail("Format --region harus X,Y,LEBAR,TINGGI");
     } else if (app.test_source) {
@@ -373,12 +401,6 @@ static int cmd_share(int argc, char **argv)
     }
     app.out_w &= ~1;
     app.out_h &= ~1;
-
-    stop_stale(match_share, NULL);
-
-    app.enc_name = encoder_pick(app.encoder);
-    if (!app.enc_name)
-        return fail("Tidak ada encoder H.264 yang jalan. Jalankan install.sh untuk memasang plugin GStreamer.");
 
     app.web_dir = find_web_dir(web_dir);
     if (!app.web_dir)
@@ -420,6 +442,7 @@ static int cmd_share(int argc, char **argv)
     server_stop(&app);
     share_stop(&app);
     input_free(app.input);
+    portal_free(app.portal);
     g_main_loop_unref(app.loop);
     g_ptr_array_unref(addrs);
     g_string_free(urls, TRUE);
@@ -510,7 +533,11 @@ static int cmd_probe(void)
     gst_init(NULL, NULL);
     const char *enc = encoder_pick("auto");
     char *uxplay = find_uxplay();
-    tsunagu_event("probe", "encoder", enc ? enc : "", "uxplay", uxplay ? "yes" : "no", NULL);
+    GstElementFactory *pw = gst_element_factory_find("pipewiresrc");
+    tsunagu_event("probe", "encoder", enc ? enc : "", "uxplay", uxplay ? "yes" : "no",
+                  "pipewire", pw ? "yes" : "no", NULL);
+    if (pw)
+        gst_object_unref(pw);
     g_free(uxplay);
     return enc ? 0 : 1;
 }

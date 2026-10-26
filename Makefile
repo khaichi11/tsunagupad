@@ -7,7 +7,7 @@ DATADIR  ?= $(PREFIX)/share/tsunagupad
 EXT_UUID := tsunagu-pad@local
 EXT_DIR  ?= $(HOME)/.local/share/gnome-shell/extensions/$(EXT_UUID)
 
-PKGS     := gstreamer-1.0 gstreamer-rtp-1.0 libsoup-3.0 json-glib-1.0 libqrencode x11 xtst
+PKGS     := gstreamer-1.0 gstreamer-rtp-1.0 libsoup-3.0 json-glib-1.0 gio-unix-2.0 libqrencode x11 xtst
 CFLAGS   ?= -O2 -g
 CFLAGS   += -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers \
             $(shell pkg-config --cflags $(PKGS)) \

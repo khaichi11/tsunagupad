@@ -1,10 +1,11 @@
 /* Kontrol dari iPad.
- *   Sentuh, mouse, keyboard -> XTest (langsung ke server X).
+ *   Sentuh, mouse, keyboard -> XTest (sesi X11) atau portal RemoteDesktop (sesi Wayland).
  *   Apple Pencil            -> tablet virtual uinput (tekanan + kemiringan),
  *                              atau jadi mouse biasa bila /dev/uinput tidak bisa dibuka.
  * SPDX-License-Identifier: MIT
  */
 #include <fcntl.h>
+#include <gio/gio.h>
 #include <linux/uinput.h>
 #include <math.h>
 #include <string.h>
@@ -23,14 +24,15 @@
 
 struct _Input {
     App *app;
-    Display *dpy;
+    Portal *portal;         /* sesi Wayland; NULL di X11 */
+    Display *dpy;           /* NULL di Wayland */
     int tablet;             /* fd uinput; -1 berarti Pencil dipakai sebagai mouse */
     gboolean pen_near, pen_touch, pen_mouse_down;
     double scroll_x, scroll_y;
     KeyCode spare;          /* keycode kosong untuk karakter di luar layout keyboard */
     KeyCode shift;
     guint buttons;          /* bitmask tombol mouse yang sedang ditekan */
-    GHashTable *keys;       /* keycode yang sedang ditekan */
+    GHashTable *keys;       /* kode evdev tombol yang sedang ditekan */
 };
 
 /* KeyboardEvent.code (atau .key untuk tombol khusus) -> kode evdev.
@@ -89,6 +91,54 @@ static void region_point(Input *in, double nx, double ny, int *x, int *y)
     *y = a->ry + (int) lround(CLAMP(ny, 0.0, 1.0) * (a->rh - 1));
 }
 
+/* ---------- penyuntik: XTest (X11) atau portal RemoteDesktop (Wayland) ---------- */
+
+static int evdev_button(guint xbutton)
+{
+    switch (xbutton) {
+    case 2: return BTN_MIDDLE;
+    case 3: return BTN_RIGHT;
+    default: return BTN_LEFT;
+    }
+}
+
+static void fake_motion(Input *in, int x, int y)
+{
+    if (in->portal)
+        portal_motion(in->portal, x, y);
+    else
+        fake_motion(in, x, y);
+}
+
+/* Nomor tombol gaya X: 1-3 mouse, 4-7 roda (atas, bawah, kiri, kanan). */
+static void fake_button(Input *in, guint b, gboolean down)
+{
+    if (!in->portal) {
+        XTestFakeButtonEvent(in->dpy, b, down, CurrentTime);
+        return;
+    }
+    if (b >= 4) {
+        if (down)
+            portal_axis(in->portal, b >= 6 ? 1 : 0, (b == 5 || b == 7) ? 1 : -1);
+        return;
+    }
+    portal_button(in->portal, evdev_button(b), down);
+}
+
+static void fake_key(Input *in, int evdev, gboolean down)
+{
+    if (in->portal)
+        portal_key(in->portal, evdev, down);
+    else
+        XTestFakeKeyEvent(in->dpy, evdev + 8, down, CurrentTime);   /* keycode X = evdev + 8 */
+}
+
+static void fake_flush(Input *in)
+{
+    if (in->dpy)
+        fake_flush(in);
+}
+
 /* ---------- tablet virtual (uinput) ---------- */
 
 static void emit(int fd, int type, int code, int value)
@@ -101,6 +151,86 @@ static void emit(int fd, int type, int code, int value)
     if (write(fd, &ev, sizeof ev) != sizeof ev) {
         /* antrean kernel penuh: event ini dibuang, event berikutnya tetap jalan */
     }
+}
+
+#define TABLET_VENDOR  0x1209
+#define TABLET_PRODUCT 0x1c41
+
+static GSettings *tablet_settings(void)
+{
+    GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+    GSettingsSchema *schema = src ?
+        g_settings_schema_source_lookup(src, "org.gnome.desktop.peripherals.tablet", TRUE) : NULL;
+    if (!schema)
+        return NULL;
+    gboolean ok = g_settings_schema_has_key(schema, "output");
+    g_settings_schema_unref(schema);
+    if (!ok)
+        return NULL;
+    char *path = g_strdup_printf("/org/gnome/desktop/peripherals/tablets/%04x:%04x/",
+                                 TABLET_VENDOR, TABLET_PRODUCT);
+    GSettings *settings = g_settings_new_with_path("org.gnome.desktop.peripherals.tablet", path);
+    g_free(path);
+    return settings;
+}
+
+/* Wayland: arahkan tablet virtual ke layar yang dibagikan. Mutter membaca tujuan
+ * tablet dari GSettings (vendor, produk, serial EDID layar), jadi layar yang
+ * dipilih di jendela izin dicari lewat DisplayConfig berdasarkan posisinya. */
+static gboolean tablet_map_output(App *app)
+{
+    int sx, sy, sw, sh;
+    portal_geometry(app->portal, &sx, &sy, &sw, &sh);
+
+    GSettings *settings = tablet_settings();
+    if (!settings)
+        return FALSE;
+
+    gboolean mapped = FALSE;
+    GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+    GVariant *state = bus ? g_dbus_connection_call_sync(
+        bus, "org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",
+        "org.gnome.Mutter.DisplayConfig", "GetCurrentState", NULL,
+        G_VARIANT_TYPE("(ua((ssss)a(siiddada{sv})a{sv})a(iiduba(ssss)a{sv})a{sv})"),
+        G_DBUS_CALL_FLAGS_NONE, 2000, NULL, NULL) : NULL;
+    if (state) {
+        GVariant *logical = g_variant_get_child_value(state, 2);
+        gsize n = g_variant_n_children(logical);
+        for (gsize i = 0; i < n && !mapped; i++) {
+            GVariant *lm = g_variant_get_child_value(logical, i);
+            int x, y;
+            g_variant_get_child(lm, 0, "i", &x);
+            g_variant_get_child(lm, 1, "i", &y);
+            GVariant *monitors = g_variant_get_child_value(lm, 5);
+            if (x == sx && y == sy && g_variant_n_children(monitors) > 0) {
+                const char *connector, *vendor, *product, *serial;
+                GVariant *spec = g_variant_get_child_value(monitors, 0);
+                g_variant_get(spec, "(&s&s&s&s)", &connector, &vendor, &product, &serial);
+                const char *triple[] = { vendor, product, serial, NULL };
+                mapped = g_settings_set_strv(settings, "output", triple);
+                g_variant_unref(spec);
+            }
+            g_variant_unref(monitors);
+            g_variant_unref(lm);
+        }
+        g_variant_unref(logical);
+        g_variant_unref(state);
+        g_settings_sync();
+    }
+    if (bus)
+        g_object_unref(bus);
+    g_object_unref(settings);
+    return mapped;
+}
+
+static void tablet_unmap_output(void)
+{
+    GSettings *settings = tablet_settings();
+    if (!settings)
+        return;
+    g_settings_reset(settings, "output");
+    g_settings_sync();
+    g_object_unref(settings);
 }
 
 static int tablet_create(void)
@@ -136,8 +266,8 @@ static int tablet_create(void)
     struct uinput_setup setup;
     memset(&setup, 0, sizeof setup);
     setup.id.bustype = BUS_VIRTUAL;
-    setup.id.vendor = 0x1209;
-    setup.id.product = 0x1c41;
+    setup.id.vendor = TABLET_VENDOR;
+    setup.id.product = TABLET_PRODUCT;
     setup.id.version = 1;
     g_strlcpy(setup.name, "Tsunagu-Pad Pencil", sizeof setup.name);
     ok = ok && ioctl(fd, UI_DEV_SETUP, &setup) == 0 && ioctl(fd, UI_DEV_CREATE) == 0;
@@ -154,21 +284,30 @@ static void pen_tablet(Input *in, const char *e, JsonArray *pts, guint n)
     gboolean down = g_str_equal(e, "down"), up = g_str_equal(e, "up");
     gboolean hover = g_str_equal(e, "hover"), leave = g_str_equal(e, "leave");
     int fd = in->tablet;
-    int sw = MAX(DisplayWidth(in->dpy, DefaultScreen(in->dpy)) - 1, 1);
-    int sh = MAX(DisplayHeight(in->dpy, DefaultScreen(in->dpy)) - 1, 1);
+    int sw = 1, sh = 1;
+    if (in->dpy) {
+        sw = MAX(DisplayWidth(in->dpy, DefaultScreen(in->dpy)) - 1, 1);
+        sh = MAX(DisplayHeight(in->dpy, DefaultScreen(in->dpy)) - 1, 1);
+    }
 
     for (guint i = 0; i < n; i++) {
         JsonArray *pt = json_array_get_array_element(pts, i);
         guint len = pt ? json_array_get_length(pt) : 0;
         if (len < 3)
             continue;
-        int x, y;
-        region_point(in, json_array_get_double_element(pt, 0),
-                     json_array_get_double_element(pt, 1), &x, &y);
         double pressure = json_array_get_double_element(pt, 2);
 
-        emit(fd, EV_ABS, ABS_X, (int) ((gint64) x * ABS_POS_MAX / sw));
-        emit(fd, EV_ABS, ABS_Y, (int) ((gint64) y * ABS_POS_MAX / sh));
+        if (in->portal) {
+            /* Tablet dipetakan ke layar yang dibagikan, jadi 0..1 langsung jadi rentang penuh. */
+            emit(fd, EV_ABS, ABS_X, (int) lround(CLAMP(json_array_get_double_element(pt, 0), 0.0, 1.0) * ABS_POS_MAX));
+            emit(fd, EV_ABS, ABS_Y, (int) lround(CLAMP(json_array_get_double_element(pt, 1), 0.0, 1.0) * ABS_POS_MAX));
+        } else {
+            int x, y;
+            region_point(in, json_array_get_double_element(pt, 0),
+                         json_array_get_double_element(pt, 1), &x, &y);
+            emit(fd, EV_ABS, ABS_X, (int) ((gint64) x * ABS_POS_MAX / sw));
+            emit(fd, EV_ABS, ABS_Y, (int) ((gint64) y * ABS_POS_MAX / sh));
+        }
         if (len >= 5) {
             emit(fd, EV_ABS, ABS_TILT_X, CLAMP((int) json_array_get_double_element(pt, 3), -90, 90));
             emit(fd, EV_ABS, ABS_TILT_Y, CLAMP((int) json_array_get_double_element(pt, 4), -90, 90));
@@ -210,17 +349,17 @@ static void pen_mouse(Input *in, const char *e, JsonArray *pts, guint n)
         int x, y;
         region_point(in, json_array_get_double_element(pt, 0),
                      json_array_get_double_element(pt, 1), &x, &y);
-        XTestFakeMotionEvent(in->dpy, -1, x, y, CurrentTime);
+        fake_motion(in, x, y);
         if (down && !in->pen_mouse_down) {
-            XTestFakeButtonEvent(in->dpy, 1, True, CurrentTime);
+            fake_button(in, 1, TRUE);
             in->pen_mouse_down = TRUE;
         }
     }
     if (release && in->pen_mouse_down) {
-        XTestFakeButtonEvent(in->dpy, 1, False, CurrentTime);
+        fake_button(in, 1, FALSE);
         in->pen_mouse_down = FALSE;
     }
-    XFlush(in->dpy);
+    fake_flush(in);
 }
 
 /* ---------- mouse, scroll, keyboard ---------- */
@@ -232,7 +371,7 @@ static void pointer_to(Input *in, JsonObject *o)
     int x, y;
     region_point(in, json_object_get_double_member_with_default(o, "x", 0),
                  json_object_get_double_member_with_default(o, "y", 0), &x, &y);
-    XTestFakeMotionEvent(in->dpy, -1, x, y, CurrentTime);
+    fake_motion(in, x, y);
 }
 
 static void mouse_event(Input *in, JsonObject *o)
@@ -242,24 +381,24 @@ static void mouse_event(Input *in, JsonObject *o)
 
     pointer_to(in, o);
     if (g_str_equal(e, "down")) {
-        XTestFakeButtonEvent(in->dpy, b, True, CurrentTime);
+        fake_button(in, b, TRUE);
         in->buttons |= 1u << b;
     } else if (g_str_equal(e, "up")) {
-        XTestFakeButtonEvent(in->dpy, b, False, CurrentTime);
+        fake_button(in, b, FALSE);
         in->buttons &= ~(1u << b);
     } else if (g_str_equal(e, "click")) {
-        XTestFakeButtonEvent(in->dpy, b, True, CurrentTime);
-        XTestFakeButtonEvent(in->dpy, b, False, CurrentTime);
+        fake_button(in, b, TRUE);
+        fake_button(in, b, FALSE);
     }
-    XFlush(in->dpy);
+    fake_flush(in);
 }
 
 static void wheel(Input *in, double *acc, guint neg_button, guint pos_button)
 {
     while (*acc >= 1.0 || *acc <= -1.0) {
         guint b = *acc > 0 ? pos_button : neg_button;
-        XTestFakeButtonEvent(in->dpy, b, True, CurrentTime);
-        XTestFakeButtonEvent(in->dpy, b, False, CurrentTime);
+        fake_button(in, b, TRUE);
+        fake_button(in, b, FALSE);
         *acc += *acc > 0 ? -1.0 : 1.0;
     }
 }
@@ -272,7 +411,7 @@ static void scroll_event(Input *in, JsonObject *o)
     in->scroll_x += json_object_get_double_member_with_default(o, "dx", 0);
     wheel(in, &in->scroll_y, 4, 5);
     wheel(in, &in->scroll_x, 6, 7);
-    XFlush(in->dpy);
+    fake_flush(in);
 }
 
 static void key_event(Input *in, JsonObject *o)
@@ -283,14 +422,13 @@ static void key_event(Input *in, JsonObject *o)
     if (key < 0)
         return;
 
-    KeyCode kc = key + 8;   /* keycode X = keycode evdev + 8 */
     gboolean down = g_str_equal(str_member(o, "e"), "down");
-    XTestFakeKeyEvent(in->dpy, kc, down, CurrentTime);
+    fake_key(in, key, down);
     if (down)
-        g_hash_table_add(in->keys, GUINT_TO_POINTER(kc));
+        g_hash_table_add(in->keys, GINT_TO_POINTER(key));
     else
-        g_hash_table_remove(in->keys, GUINT_TO_POINTER(kc));
-    XFlush(in->dpy);
+        g_hash_table_remove(in->keys, GINT_TO_POINTER(key));
+    fake_flush(in);
 }
 
 static KeyCode find_spare_keycode(Display *dpy)
@@ -321,6 +459,13 @@ static void type_char(Input *in, gunichar ch)
         ks = ch;
     else
         ks = 0x01000000 | ch;   /* keysym Unicode */
+
+    if (in->portal) {
+        /* Mutter memetakan sendiri keysym yang tidak ada di layout, termasuk Shift. */
+        portal_keysym(in->portal, ks, TRUE);
+        portal_keysym(in->portal, ks, FALSE);
+        return;
+    }
 
     KeyCode kc = XKeysymToKeycode(in->dpy, ks);
     gboolean shift = FALSE;
@@ -360,28 +505,46 @@ static void text_event(Input *in, JsonObject *o)
 
 Input *input_new(App *app)
 {
-    Display *dpy = XOpenDisplay(NULL);
-    if (!dpy) {
-        tsunagu_event("warning", "message", "Display X11 tidak ditemukan, kontrol dari iPad dimatikan", NULL);
-        return NULL;
-    }
-    int ev, err, major, minor;
-    if (!XTestQueryExtension(dpy, &ev, &err, &major, &minor)) {
-        tsunagu_event("warning", "message", "Ekstensi XTest tidak tersedia, kontrol dari iPad dimatikan", NULL);
-        XCloseDisplay(dpy);
-        return NULL;
+    Display *dpy = NULL;
+    if (app->portal) {
+        if (!portal_can_control(app->portal)) {
+            tsunagu_event("warning", "message",
+                          "GNOME belum mengizinkan kendali dari iPad (iPad hanya menonton). Nyalakan lagi dan aktifkan \"Allow Remote Interaction\" di jendela izin.", NULL);
+            return NULL;
+        }
+    } else {
+        dpy = XOpenDisplay(NULL);
+        if (!dpy) {
+            tsunagu_event("warning", "message", "Display X11 tidak ditemukan, kontrol dari iPad dimatikan", NULL);
+            return NULL;
+        }
+        int ev, err, major, minor;
+        if (!XTestQueryExtension(dpy, &ev, &err, &major, &minor)) {
+            tsunagu_event("warning", "message", "Ekstensi XTest tidak tersedia, kontrol dari iPad dimatikan", NULL);
+            XCloseDisplay(dpy);
+            return NULL;
+        }
     }
 
     Input *in = g_new0(Input, 1);
     in->app = app;
+    in->portal = app->portal;
     in->dpy = dpy;
     in->tablet = -1;
     in->keys = g_hash_table_new(NULL, NULL);
-    in->shift = XKeysymToKeycode(dpy, XK_Shift_L);
-    in->spare = find_spare_keycode(dpy);
+    if (dpy) {
+        in->shift = XKeysymToKeycode(dpy, XK_Shift_L);
+        in->spare = find_spare_keycode(dpy);
+    }
 
     if (g_strcmp0(app->pen_mode, "mouse") != 0) {
-        in->tablet = tablet_create();
+        /* Di Wayland tablet hanya dipakai bila bisa dipetakan ke layar yang dibagikan;
+         * kalau tidak, Pencil jadi pointer biasa lewat portal (tanpa tekanan). */
+        if (!in->portal || tablet_map_output(app)) {
+            in->tablet = tablet_create();
+            if (in->tablet < 0 && in->portal)
+                tablet_unmap_output();
+        }
         if (in->tablet < 0 && g_strcmp0(app->pen_mode, "tablet") == 0)
             tsunagu_event("warning", "message",
                        "/dev/uinput tidak bisa dibuka, tekanan Pencil tidak aktif (jalankan install.sh)", NULL);
@@ -428,22 +591,22 @@ void input_release_all(Input *in)
         in->pen_touch = in->pen_near = FALSE;
     }
     if (in->pen_mouse_down) {
-        XTestFakeButtonEvent(in->dpy, 1, False, CurrentTime);
+        fake_button(in, 1, FALSE);
         in->pen_mouse_down = FALSE;
     }
     for (guint b = 1; b <= 3; b++)
         if (in->buttons & (1u << b))
-            XTestFakeButtonEvent(in->dpy, b, False, CurrentTime);
+            fake_button(in, b, FALSE);
     in->buttons = 0;
 
     GHashTableIter it;
     gpointer kc;
     g_hash_table_iter_init(&it, in->keys);
     while (g_hash_table_iter_next(&it, &kc, NULL))
-        XTestFakeKeyEvent(in->dpy, GPOINTER_TO_UINT(kc), False, CurrentTime);
+        fake_key(in, GPOINTER_TO_INT(kc), FALSE);
     g_hash_table_remove_all(in->keys);
     in->scroll_x = in->scroll_y = 0;
-    XFlush(in->dpy);
+    fake_flush(in);
 }
 
 void input_free(Input *in)
@@ -451,15 +614,18 @@ void input_free(Input *in)
     if (!in)
         return;
     input_release_all(in);
-    if (in->spare) {
+    if (in->dpy && in->spare) {
         KeySym none[1] = { NoSymbol };
         XChangeKeyboardMapping(in->dpy, in->spare, 1, none, 1);
     }
     if (in->tablet >= 0) {
         ioctl(in->tablet, UI_DEV_DESTROY);
         close(in->tablet);
+        if (in->portal)
+            tablet_unmap_output();
     }
-    XCloseDisplay(in->dpy);
+    if (in->dpy)
+        XCloseDisplay(in->dpy);
     g_hash_table_destroy(in->keys);
     g_free(in);
 }

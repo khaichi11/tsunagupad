@@ -32,7 +32,7 @@ if [[ "${XDG_SESSION_TYPE:-}" == "x11" ]]; then
     warn "Muat ulang GNOME Shell agar panel versi baru terpakai: Alt+F2, ketik r, lalu Enter."
 else
     warn "Log out lalu login kembali agar panel versi baru terpakai."
-    warn "Mode Ubuntu ke iPad saat ini butuh sesi \"Ubuntu on Xorg\" (pilih di layar login)."
+    warn "Pertama kali berbagi layar di Wayland, GNOME menampilkan jendela izin: pilih layar dan nyalakan \"Allow Remote Interaction\"."
 fi
 
 say "Selesai! Buka Quick Settings (pojok kanan atas) dan ketuk tombol Tsunagu-Pad."

@@ -16,10 +16,11 @@ group=$(id -gn "$user")
 
 packages=(
     build-essential pkg-config
-    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libsoup-3.0-dev libjson-glib-dev
+    libglib2.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libsoup-3.0-dev libjson-glib-dev
     libqrencode-dev libx11-dev libxtst-dev
     gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
     gstreamer1.0-plugins-ugly gstreamer1.0-nice gstreamer1.0-vaapi gstreamer1.0-libav gstreamer1.0-x
+    gstreamer1.0-pipewire pipewire xdg-desktop-portal xdg-desktop-portal-gnome
     libgstreamer-plugins-bad1.0-0 uxplay avahi-daemon network-manager
     # dnsmasq-base (bukan dnsmasq): tanpa layanan DNS sistem yang bentrok dengan systemd-resolved.
     hostapd dnsmasq-base iw iptables x11-xserver-utils xserver-xorg-core

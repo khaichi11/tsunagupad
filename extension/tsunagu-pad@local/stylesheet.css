@@ -1,15 +1,113 @@
+/* Tsunagu-Pad, gaya panel Quick Settings.
+ * Bentuk dan warna mengikuti kontrol iOS: segmen abu-abu, kapsul bertinta aksen,
+ * dan kartu bersudut bulat. Aksen mengikuti warna aksen sistem (GNOME 47+);
+ * versi lama memakai biru iOS sebagai cadangan.
+ * SPDX-License-Identifier: MIT
+ */
+
+.tsunagupad-menu .tsunagupad-row {
+  padding: 3px 4px;
+  border-radius: 0;
+}
+
+/* Kontrol segmen */
+.tsunagupad-segmented {
+  padding: 2px;
+  border-radius: 10px;
+  background-color: rgba(118, 118, 128, 0.32);
+}
+
+.tsunagupad-segment {
+  padding: 6px 4px;
+  border-radius: 8px;
+  border: none;
+  background-color: transparent;
+  color: rgba(235, 235, 245, 0.68);
+  font-size: 0.88em;
+  font-weight: 600;
+  text-align: center;
+}
+
+.tsunagupad-segment:hover {
+  color: #ffffff;
+}
+
+.tsunagupad-segment:checked {
+  background-color: #636366;
+  color: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+/* Baris pengaturan: nilai abu-abu di kanan */
+.tsunagupad-value {
+  padding-right: 4px;
+  color: rgba(235, 235, 245, 0.55);
+}
+
+/* Kartu info dan QR */
 .tsunagupad-info {
-  spacing: 10px;
-  padding: 6px 0;
+  spacing: 12px;
+  padding: 8px 0 4px;
 }
 
 .tsunagupad-qr {
-  border-radius: 6px;
+  border-radius: 14px;
 }
 
 .tsunagupad-caption {
   text-align: center;
-  font-size: 0.9em;
+  font-size: 0.88em;
+  color: rgba(235, 235, 245, 0.62);
+}
+
+.tsunagupad-caption-left {
+  text-align: left;
+  padding: 0 8px;
+}
+
+/* Kapsul bertinta aksen, seperti tombol teks iOS */
+.tsunagupad-pill {
+  padding: 6px 16px;
+  border-radius: 9999px;
+  border: none;
+  color: #0a84ff;
+  background-color: rgba(10, 132, 255, 0.18);
+  font-weight: 600;
+}
+
+.tsunagupad-pill {
+  color: -st-accent-color;
+  background-color: st-transparentize(-st-accent-color, 0.82);
+}
+
+.tsunagupad-pill:hover,
+.tsunagupad-pill:focus {
+  background-color: st-transparentize(-st-accent-color, 0.7);
+}
+
+.tsunagupad-pill:active {
+  background-color: st-transparentize(-st-accent-color, 0.58);
+}
+
+.tsunagupad-pill-box {
+  spacing: 7px;
+}
+
+.tsunagupad-pill-icon {
+  icon-size: 14px;
+}
+
+.quick-toggle-menu .popup-menu-item.tsunagupad-link,
+.quick-toggle-menu .popup-menu-item.tsunagupad-link:hover,
+.quick-toggle-menu .popup-menu-item.tsunagupad-link:focus {
+  color: #0a84ff !important;
+  color: -st-accent-color !important;
+}
+
+/* Dialog hotspot: lembar bersudut bulat dengan kolom isian abu-abu */
+.tsunagupad-dialog {
+  border-radius: 22px;
+  padding: 22px 22px 18px;
 }
 
 .tsunagupad-dialog-box {
@@ -18,17 +116,33 @@
 }
 
 .tsunagupad-dialog-title {
-  font-size: 1.2em;
+  font-size: 1.25em;
   font-weight: bold;
-  padding-bottom: 6px;
+  text-align: center;
+  padding-bottom: 8px;
 }
 
 .tsunagupad-dialog-label {
-  font-size: 0.9em;
-  padding-top: 4px;
+  font-size: 0.88em;
+  color: rgba(235, 235, 245, 0.62);
+  padding: 4px 4px 0;
+}
+
+.tsunagupad-dialog StEntry {
+  border-radius: 10px;
+  border: none;
+  padding: 9px 12px;
+  background-color: rgba(118, 118, 128, 0.32);
+  box-shadow: none;
+}
+
+.tsunagupad-dialog StEntry:focus {
+  box-shadow: inset 0 0 0 2px #0a84ff;
+  box-shadow: inset 0 0 0 2px -st-accent-color;
 }
 
 .tsunagupad-dialog-status {
-  font-size: 0.9em;
-  color: #f8a35e;
+  font-size: 0.88em;
+  color: #ff9f0a;
+  padding: 0 4px;
 }

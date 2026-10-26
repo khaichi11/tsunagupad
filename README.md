@@ -39,12 +39,21 @@ Run `python3 docs/make_demo.py` to rebuild them.
 
 ## How it works
 
-The `tsunagupad` daemon captures an X11 screen region, encodes it to H.264 with
-NVENC, Intel VA-API, or x264, and serves two things on port 8765: a small web
-page for the iPad and a WebSocket channel used for WebRTC signalling and input
-events. The iPad renders the stream in Safari and sends pointer, pen, and key
-events back. Input is injected into X11 through XTest, and Apple Pencil pressure
-through a virtual tablet device on `/dev/uinput`.
+The `tsunagupad` daemon captures the screen, encodes it to H.264 with NVENC,
+Intel VA-API, or x264, and serves two things on port 8765: a small web page for
+the iPad and a WebSocket channel used for WebRTC signalling and input events.
+The iPad renders the stream in Safari and sends pointer, pen, and key events
+back.
+
+- **Xorg session:** the screen region is captured with X11 and input is
+  injected through XTest.
+- **Wayland session:** the screen comes from the PipeWire stream of the
+  xdg-desktop-portal ScreenCast portal, and pointer, scroll, and keyboard input
+  goes through the RemoteDesktop portal. GNOME asks for permission once and
+  remembers it.
+
+Apple Pencil pressure and tilt go through a virtual tablet device on
+`/dev/uinput`. On Wayland that tablet is mapped to the shared monitor.
 
 Latency is kept low in three ways: the encoder runs in a zero latency mode with
 one second keyframes, the bitrate adapts to packet loss reported by the iPad,
@@ -53,8 +62,9 @@ instead of buffering it.
 
 ## Requirements
 
-- Ubuntu 24.04 or newer with GNOME 45 to 48.
-- An **Ubuntu on Xorg** session. Screen capture and input injection use X11.
+- Ubuntu 24.04 or newer with GNOME 45 to 50.
+- An Ubuntu on Xorg or a Wayland session. Both work; GNOME 50 (Ubuntu 26.04) is
+  Wayland only.
 - An iPad with Safari. No app and no jailbreak needed.
 - Optional: an NVIDIA or Intel GPU for hardware encoding. Software encoding
   works as a fallback.
@@ -74,7 +84,7 @@ it needs, builds the daemon, installs the program and the GNOME extension into
 permission for Apple Pencil pressure.
 
 Reload GNOME Shell afterwards: press `Alt+F2`, type `r`, then Enter. On a Wayland
-session, log out and log in again with Ubuntu on Xorg.
+session, log out and log in again.
 
 To remove everything:
 
@@ -90,8 +100,12 @@ Tsunagu-Pad button for the options.
 ### Share the Ubuntu screen
 
 1. Select the mode for sharing the Ubuntu screen, then pick the monitor and the
-   quality.
-2. Tap the Tsunagu-Pad button.
+   quality. On Wayland the monitor is chosen in the GNOME permission window.
+2. Tap the Tsunagu-Pad button. On Wayland, GNOME shows a permission window the
+   first time: pick the screen, turn on **Allow Remote Interaction** so the iPad
+   can control Ubuntu, and keep **Remember This Selection** on. The choice is
+   remembered; to be asked again, turn sharing off and on after revoking it in
+   GNOME Settings, or delete `~/.config/tsunagupad/portal-token`.
 3. Scan the QR code with the iPad camera, or type the address into Safari.
 4. Optional: in Safari use Share, then Add to Home Screen, so the page opens
    full screen like an app.
@@ -184,7 +198,10 @@ stopped automatically when Tsunagu-Pad starts again.
   froze Xorg on hybrid Intel and NVIDIA laptops, so that path was removed. A
   physical HDMI or USB-C dummy adapter plus the monitor selector is the reliable
   way to get an extra screen.
-- **Xorg only.** A Wayland session is not supported yet.
+- **Wayland needs the GNOME permission window once.** Without **Allow Remote
+  Interaction** the iPad can only watch. Apple Pencil pressure needs the virtual
+  tablet to be mapped to the shared monitor, which is done through GNOME
+  settings; if that fails, the Pencil acts as a plain pointer.
 - **One iPad at a time.** A new connection replaces the previous one.
 
 ## Security

@@ -400,6 +400,14 @@ gboolean share_start(App *app, GError **error)
         src = g_strdup_printf("videotestsrc is-live=true pattern=ball ! "
                               "video/x-raw,format=BGRx,width=%d,height=%d,framerate=%d/1",
                               app->rw, app->rh, app->fps);
+    else if (app->portal)
+        /* Mutter hanya mengirim frame saat layar berubah. keepalive-time mengulang frame
+         * terakhir supaya iPad yang baru tersambung tetap mendapat keyframe, dan
+         * videorate membatasi laju sesuai preset kualitas. */
+        src = g_strdup_printf("pipewiresrc fd=%d path=%u do-timestamp=true keepalive-time=500 ! "
+                              "video/x-raw ! videorate drop-only=true max-rate=%d ! "
+                              "video/x-raw",
+                              portal_pipewire_fd(app->portal), portal_node(app->portal), app->fps);
     else
         src = g_strdup_printf("ximagesrc use-damage=false show-pointer=true "
                               "startx=%d starty=%d endx=%d endy=%d ! video/x-raw,framerate=%d/1",

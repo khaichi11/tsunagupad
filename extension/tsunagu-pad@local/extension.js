@@ -26,10 +26,10 @@ const HOTSPOT_HELPER = '/usr/local/lib/tsunagupad/hotspot-config';
  * yang panjang (mis. kata sandi Wi-Fi) tidak melebihi lebar menu Quick Settings. */
 const QR_MAX_PX = 168;
 const QUALITIES = [
-    ['hemat', 'Hemat (jaringan lemah)'],
-    ['lancar', 'Lancar · 720p'],
-    ['seimbang', 'Seimbang · 1600px'],
-    ['tajam', 'Tajam · resolusi asli'],
+    ['hemat', 'Hemat', 'Hemat data, untuk jaringan lemah'],
+    ['lancar', 'Lancar', '720p, paling responsif'],
+    ['seimbang', 'Seimbang', '1600 px, jernih dan tetap lancar'],
+    ['tajam', 'Tajam', 'Resolusi asli layar'],
 ];
 const CONFIG_PATH = GLib.build_filenamev([GLib.get_user_config_dir(), 'tsunagupad', 'panel.json']);
 
@@ -89,6 +89,15 @@ function readHotspotConfig() {
 function wifiQrText(ssid, password) {
     const escape = s => s.replace(/([\\;,:"])/g, '\\$1');
     return `WIFI:T:WPA;S:${escape(ssid)};P:${escape(password)};;`;
+}
+
+/* GNOME 50 menghapus Meta.is_wayland_compositor(); pakai penggantinya bila ada. */
+function isWayland() {
+    if (typeof Meta.is_wayland_compositor === 'function')
+        return Meta.is_wayland_compositor();
+    if (typeof global.context?.get_wayland_compositor === 'function')
+        return !!global.context.get_wayland_compositor();
+    return GLib.getenv('XDG_SESSION_TYPE') === 'wayland';
 }
 
 function findBinary() {
@@ -261,8 +270,15 @@ class QrCode extends St.DrawingArea {
     _paint() {
         const cr = this.get_context();
         const [width, height] = this.get_surface_size();
+        /* Kartu putih bersudut bulat; margin 2 modul menjaga pola sudut QR tetap utuh. */
+        const radius = Math.min(14, width / 8);
+        cr.newSubPath();
+        cr.arc(width - radius, radius, radius, -Math.PI / 2, 0);
+        cr.arc(width - radius, height - radius, radius, 0, Math.PI / 2);
+        cr.arc(radius, height - radius, radius, Math.PI / 2, Math.PI);
+        cr.arc(radius, radius, radius, Math.PI, 3 * Math.PI / 2);
+        cr.closePath();
         cr.setSourceRGB(1, 1, 1);
-        cr.rectangle(0, 0, width, height);
         cr.fill();
 
         const n = this._rows.length;
@@ -280,6 +296,31 @@ class QrCode extends St.DrawingArea {
         }
         cr.$dispose();
     }
+});
+
+/* Kontrol segmen ala iOS: satu baris tombol, satu yang terpilih. */
+const Segmented = GObject.registerClass({
+    Signals: {'selected': {param_types: [GObject.TYPE_STRING]}},
+}, class TsunaguPadSegmented extends St.BoxLayout {
+    constructor(segments) {
+        super({style_class: 'tsunagupad-segmented', x_expand: true});
+        this._buttons = new Map();
+        for (const {id, label} of segments) {
+            const button = new St.Button({
+                label, style_class: 'tsunagupad-segment', x_expand: true, can_focus: true,
+                accessible_name: label,
+            });
+            button.connect('clicked', () => this.emit('selected', id));
+            this._buttons.set(id, button);
+            this.add_child(button);
+        }
+    }
+
+    setSelected(id) {
+        for (const [key, button] of this._buttons)
+            button.checked = key === id;
+    }
+
 });
 
 const TsunaguPadToggle = GObject.registerClass(
@@ -308,6 +349,7 @@ class TsunaguPadToggle extends QuickMenuToggle {
         this._hotspotRefresh = null;
         this._receiverRestartId = 0;
         this._monitorCheckId = 0;
+        this._copyTimeoutId = 0;
         this._destroyed = false;
 
         this.menu.setHeader('video-display-symbolic', 'Tsunagu-Pad', 'Satukan layar Ubuntu dan iPad');
@@ -342,20 +384,48 @@ class TsunaguPadToggle extends QuickMenuToggle {
 
     /* ---------- menu ---------- */
 
-    _buildMenu() {
-        this._modeItems = {
-            share: this.menu.addAction('Bagikan layar Ubuntu ke iPad', () => this._setMode('share')),
-            receive: this.menu.addAction('Tampilkan layar iPad di Ubuntu (AirPlay)', () => this._setMode('receive')),
-        };
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+    _rowItem(actor) {
+        const item = new PopupMenu.PopupBaseMenuItem({
+            reactive: false, can_focus: false, style_class: 'tsunagupad-row',
+        });
+        item.add_child(actor);
+        return item;
+    }
 
-        this._monitorMenu = new PopupMenu.PopupSubMenuMenuItem('', false);
+    _buildMenu() {
+        this.menu.box.add_style_class_name('tsunagupad-menu');
+
+        this._modeControl = new Segmented([
+            {id: 'share', label: 'Ubuntu ke iPad'},
+            {id: 'receive', label: 'iPad ke Ubuntu'},
+        ]);
+        this._modeControl.connect('selected', (control, id) => this._setMode(id));
+        this.menu.addMenuItem(this._rowItem(this._modeControl));
+
+        /* Di Wayland, GNOME menanyakan layar yang dibagikan dan izin kendali lewat jendela
+         * sendiri; pilihannya diingat, jadi petunjuk ini hanya perlu muncul saat belum berjalan. */
+        this._hint = new St.Label({style_class: 'tsunagupad-caption tsunagupad-caption-left', x_expand: true});
+        this._hint.text = 'GNOME menampilkan jendela izin. Pilih layar dan nyalakan "Allow Remote Interaction" agar iPad bisa mengontrol; pilihan diingat.';
+        this._hint.clutter_text.line_wrap = true;
+        this._hintItem = this._rowItem(this._hint);
+        this.menu.addMenuItem(this._hintItem);
+
+        /* Nilai di kanan seperti baris pengaturan iOS: nama kiri, pilihan abu-abu kanan. */
+        this._monitorMenu = new PopupMenu.PopupSubMenuMenuItem('Monitor', false);
+        this._monitorMenu.label.x_expand = true;
+        if (this._monitorMenu._triangleBin)
+            this._monitorMenu._triangleBin.x_expand = false;
+        this._monitorValue = new St.Label({style_class: 'tsunagupad-value', y_align: Clutter.ActorAlign.CENTER});
+        this._monitorMenu.insert_child_above(this._monitorValue, this._monitorMenu.label);
         this.menu.addMenuItem(this._monitorMenu);
 
-        this._qualityMenu = new PopupMenu.PopupSubMenuMenuItem('', false);
-        this._qualityItems = QUALITIES.map(([id, label]) =>
-            [id, this._qualityMenu.menu.addAction(label, () => this._setQuality(id))]);
-        this.menu.addMenuItem(this._qualityMenu);
+        this._qualityControl = new Segmented(QUALITIES.map(([id, label]) => ({id, label})));
+        this._qualityControl.connect('selected', (control, id) => this._setQuality(id));
+        this._qualityItem = this._rowItem(this._qualityControl);
+        this.menu.addMenuItem(this._qualityItem);
+        this._qualityCaption = new St.Label({style_class: 'tsunagupad-caption tsunagupad-caption-left', x_expand: true});
+        this._qualityCaptionItem = this._rowItem(this._qualityCaption);
+        this.menu.addMenuItem(this._qualityCaptionItem);
 
         this._fullscreenSwitch = new PopupMenu.PopupSwitchMenuItem('Layar penuh', this._config.fullscreen);
         this._fullscreenSwitch.connect('toggled', (item, state) => {
@@ -367,19 +437,26 @@ class TsunaguPadToggle extends QuickMenuToggle {
         this.menu.addMenuItem(this._fullscreenSwitch);
 
         /* QR sambungan (Ubuntu ke iPad) atau petunjuk AirPlay (iPad ke Ubuntu) */
-        this._infoItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         const infoBox = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tsunagupad-info'});
         this._qr = new QrCode();
         this._infoLabel = new St.Label({style_class: 'tsunagupad-caption', x_expand: true});
         this._infoLabel.clutter_text.line_wrap = true;
         infoBox.add_child(this._qr);
         infoBox.add_child(this._infoLabel);
-        this._infoItem.add_child(infoBox);
+        this._infoItem = this._rowItem(infoBox);
         this.menu.addMenuItem(this._infoItem);
 
-        this._copyItem = this.menu.addAction('Salin alamat', () => {
-            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, this._urls[0] ?? '');
+        const copyBox = new St.BoxLayout({style_class: 'tsunagupad-pill-box'});
+        copyBox.add_child(new St.Icon({icon_name: 'edit-copy-symbolic', style_class: 'tsunagupad-pill-icon'}));
+        this._copyLabel = new St.Label({text: 'Salin alamat', y_align: Clutter.ActorAlign.CENTER});
+        copyBox.add_child(this._copyLabel);
+        const copyButton = new St.Button({
+            style_class: 'tsunagupad-pill', child: copyBox, can_focus: true,
+            x_expand: true, x_align: Clutter.ActorAlign.CENTER, accessible_name: 'Salin alamat',
         });
+        copyButton.connect('clicked', () => this._copyAddress());
+        this._copyItem = this._rowItem(copyButton);
+        this.menu.addMenuItem(this._copyItem);
 
         /* Hotspot hostapd di AP virtual; Wi-Fi utama tetap tersambung. */
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -389,26 +466,41 @@ class TsunaguPadToggle extends QuickMenuToggle {
         });
         this.menu.addMenuItem(this._hotspotSwitch);
 
-        this._hotspotItem = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         const hotspotBox = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tsunagupad-info'});
         this._hotspotQr = new QrCode();
         this._hotspotLabel = new St.Label({style_class: 'tsunagupad-caption', x_expand: true});
         this._hotspotLabel.clutter_text.line_wrap = true;
         hotspotBox.add_child(this._hotspotQr);
         hotspotBox.add_child(this._hotspotLabel);
-        this._hotspotItem.add_child(hotspotBox);
+        this._hotspotItem = this._rowItem(hotspotBox);
         this.menu.addMenuItem(this._hotspotItem);
 
-        this.menu.addAction('Atur nama dan kata sandi hotspot…', () => {
+        const configure = this.menu.addAction('Atur nama dan kata sandi hotspot…', () => {
             const dialog = new HotspotConfigDialog(readHotspotConfig(),
                 (ssid, password) => this._saveHotspotConfig(ssid, password));
             dialog.open();
         });
+        configure.add_style_class_name('tsunagupad-link');
+    }
+
+    _copyAddress() {
+        St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, this._urls[0] ?? '');
+        this._copyLabel.text = 'Tersalin';
+        if (this._copyTimeoutId)
+            GLib.Source.remove(this._copyTimeoutId);
+        this._copyTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+            this._copyTimeoutId = 0;
+            this._copyLabel.text = 'Salin alamat';
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    _outputName(o) {
+        return o.name.startsWith('eDP') ? 'Layar laptop' : o.name;
     }
 
     _outputLabel(o) {
-        const kind = o.name.startsWith('eDP') ? 'Layar laptop' : o.name;
-        return `${kind} · ${o.width}×${o.height}${o.primary ? ' (utama)' : ''}`;
+        return `${this._outputName(o)} · ${o.width}×${o.height}${o.primary ? ' (utama)' : ''}`;
     }
 
     _selectedOutput() {
@@ -458,7 +550,8 @@ class TsunaguPadToggle extends QuickMenuToggle {
         if (this._destroyed)
             return;
         const running = !!this._daemon;
-        const share = this._config.mode === 'share';
+        const mode = this._config.mode;
+        const share = mode === 'share';
 
         this.checked = running;
         if (this._starting)
@@ -469,18 +562,18 @@ class TsunaguPadToggle extends QuickMenuToggle {
             this.subtitle = share ? 'Ubuntu ke iPad' : 'iPad ke Ubuntu';
         this._panelIcon.visible = running;
 
-        for (const [id, item] of Object.entries(this._modeItems))
-            item.setOrnament(id === this._config.mode ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+        this._modeControl.setSelected(mode);
+        this._hintItem.visible = share && isWayland() && !running && !this._starting;
 
-        this._monitorMenu.visible = share;
         const selected = this._selectedOutput();
-        this._monitorMenu.label.text = `Monitor: ${selected ? this._outputLabel(selected) : 'utama'}`;
+        this._monitorMenu.visible = share && !isWayland();
+        this._monitorValue.text = selected ? this._outputName(selected) : 'Utama';
 
-        this._qualityMenu.visible = share;
         const quality = QUALITIES.find(([id]) => id === this._config.quality) ?? QUALITIES[1];
-        this._qualityMenu.label.text = `Kualitas: ${quality[1]}`;
-        for (const [id, item] of this._qualityItems)
-            item.setOrnament(id === quality[0] ? PopupMenu.Ornament.CHECK : PopupMenu.Ornament.NONE);
+        this._qualityItem.visible = share;
+        this._qualityCaptionItem.visible = share;
+        this._qualityControl.setSelected(quality[0]);
+        this._qualityCaption.text = quality[2];
 
         this._fullscreenSwitch.visible = !share;
 
@@ -491,10 +584,9 @@ class TsunaguPadToggle extends QuickMenuToggle {
         this._qr.visible = showQr;
         if (showQr) {
             this._qr.setRows(this._qrRows);
-            let text = `Scan dengan kamera iPad, atau buka di Safari:\n${this._urls[0] ?? ''}`;
-            const others = this._urls.slice(1, 3);
-            if (others.length)
-                text += `\n\nAlamat lain:\n${others.join('\n')}`;
+            let text = `Pindai dengan kamera iPad atau buka di Safari:\n${this._urls[0] ?? ''}`;
+            for (const url of this._urls.slice(1, 3))
+                text += `\natau ${url}`;
             this._infoLabel.text = text;
         } else if (showAirplay) {
             this._infoLabel.text =
@@ -521,12 +613,13 @@ class TsunaguPadToggle extends QuickMenuToggle {
         try {
             let argv;
             if (kind === 'share') {
-                if (Meta.is_wayland_compositor())
-                    throw new Error('Mode Ubuntu ke iPad butuh sesi "Ubuntu on Xorg" (pilih di layar login).');
-                const out = await this._shareTarget();
-                this._shareOutput = out;
-                argv = [bin, 'share', '--region', `${out.x},${out.y},${out.width},${out.height}`,
-                    '--quality', this._config.quality];
+                argv = [bin, 'share', '--quality', this._config.quality];
+                /* Wayland: layar dipilih di jendela izin GNOME. X11: area dari xrandr. */
+                if (!isWayland()) {
+                    const out = await this._shareTarget();
+                    this._shareOutput = out;
+                    argv.push('--region', `${out.x},${out.y},${out.width},${out.height}`);
+                }
             } else {
                 argv = [bin, 'receive', '--name', RECEIVER_NAME];
                 if (this._config.fullscreen)
@@ -630,14 +723,22 @@ class TsunaguPadToggle extends QuickMenuToggle {
                 else if (ev.state === 'rejected')
                     this._status = 'Kode akses ditolak';
                 break;
+            case 'portal':
+                this._status = ev.state === 'waiting' ? 'Menunggu izin GNOME…' : 'Menyiapkan…';
+                break;
             case 'stats':
-                this._status = `iPad · ${ev.fps} fps`;
+                /* Layar yang diam hampir tidak menghasilkan frame; itu bukan masalah. */
+                this._status = Number(ev.fps) > 0 ? `iPad · ${ev.fps} fps` : 'Terhubung ke iPad';
                 break;
             case 'error':
                 this._notify(ev.message);
                 break;
             case 'warning':
-                console.warn(`Tsunagu-Pad: ${ev.message}`);
+                /* Peringatan yang perlu tindakan pengguna ditampilkan; sisanya cukup di log. */
+                if (ev.message.startsWith('GNOME'))
+                    this._notify(ev.message);
+                else
+                    console.warn(`Tsunagu-Pad: ${ev.message}`);
                 break;
             }
         } else if (kind === 'receive') {
@@ -668,6 +769,8 @@ class TsunaguPadToggle extends QuickMenuToggle {
     }
 
     async _refreshOutputs() {
+        if (isWayland())
+            return;
         const {outputs} = await xrandrOutputs();
         if (!this._destroyed)
             this._outputs = outputs;
@@ -675,7 +778,7 @@ class TsunaguPadToggle extends QuickMenuToggle {
 
     /* Kabel/monitor dicolok, dicabut, atau diatur ulang: bagikan area yang benar. */
     async _checkMonitors() {
-        if (this._destroyed || this._starting)
+        if (this._destroyed || this._starting || isWayland())
             return;
         await this._refreshOutputs();
 
@@ -701,7 +804,7 @@ class TsunaguPadToggle extends QuickMenuToggle {
     /* ---------- hotspot ---------- */
 
     _syncHotspot() {
-        this._hotspotSwitch.label.text = this._hotspotStatus || 'Hotspot Tsunagu-Pad (Wi-Fi tetap aktif)';
+        this._hotspotSwitch.label.text = this._hotspotStatus || 'Hotspot langsung';
         this._hotspotSwitch.setSensitive(!this._hotspotBusy);
         if (!this._hotspotBusy)
             this._hotspotSwitch.setToggleState(this._hotspotActive);
@@ -813,7 +916,7 @@ class TsunaguPadToggle extends QuickMenuToggle {
 
     shutdown() {
         this._destroyed = true;
-        for (const id of [this._receiverRestartId, this._monitorCheckId, this._pollId]) {
+        for (const id of [this._receiverRestartId, this._monitorCheckId, this._pollId, this._copyTimeoutId]) {
             if (id)
                 GLib.Source.remove(id);
         }

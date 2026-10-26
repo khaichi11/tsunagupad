@@ -40,12 +40,20 @@ dipublikasikan. Jalankan `python3 docs/make_demo.py` untuk membuatnya ulang.
 
 ## Cara kerja
 
-Program `tsunagupad` menangkap area layar X11, meng-encode-nya menjadi H.264
-dengan NVENC, Intel VA-API, atau x264, lalu menyajikan dua hal di port 8765:
-halaman web kecil untuk iPad dan kanal WebSocket untuk negosiasi WebRTC serta
-event masukan. iPad menampilkan video di Safari dan mengirim balik event
-penunjuk, pena, dan tombol. Masukan disuntikkan ke X11 lewat XTest, dan tekanan
-Apple Pencil lewat perangkat tablet virtual di `/dev/uinput`.
+Program `tsunagupad` menangkap layar, meng-encode-nya menjadi H.264 dengan
+NVENC, Intel VA-API, atau x264, lalu menyajikan dua hal di port 8765: halaman
+web kecil untuk iPad dan kanal WebSocket untuk negosiasi WebRTC serta event
+masukan. iPad menampilkan video di Safari dan mengirim balik event penunjuk,
+pena, dan tombol.
+
+- **Sesi Xorg:** area layar ditangkap lewat X11 dan masukan disuntikkan lewat
+  XTest.
+- **Sesi Wayland:** layar berasal dari aliran PipeWire portal ScreenCast
+  xdg-desktop-portal, dan masukan penunjuk, gulir, serta keyboard lewat portal
+  RemoteDesktop. GNOME meminta izin satu kali lalu mengingatnya.
+
+Tekanan dan kemiringan Apple Pencil lewat perangkat tablet virtual di
+`/dev/uinput`. Di Wayland tablet itu dipetakan ke monitor yang dibagikan.
 
 Latensi ditekan dengan tiga cara: encoder berjalan pada mode tanpa penundaan
 dengan keyframe setiap satu detik, bitrate menyesuaikan diri terhadap paket yang
@@ -54,8 +62,9 @@ begitu selesai didekode alih-alih menyimpannya di buffer.
 
 ## Kebutuhan
 
-- Ubuntu 24.04 atau lebih baru dengan GNOME 45 sampai 48.
-- Sesi **Ubuntu on Xorg**. Penangkapan layar dan penyuntikan masukan memakai X11.
+- Ubuntu 24.04 atau lebih baru dengan GNOME 45 sampai 50.
+- Sesi Ubuntu on Xorg atau Wayland. Keduanya bisa; GNOME 50 (Ubuntu 26.04) hanya
+  Wayland.
 - iPad dengan Safari. Tidak perlu aplikasi dan tidak perlu jailbreak.
 - Opsional: GPU NVIDIA atau Intel untuk encoding perangkat keras. Encoding
   perangkat lunak tersedia sebagai cadangan.
@@ -75,7 +84,7 @@ dibutuhkan, membangun program, memasang program dan extension GNOME ke
 tekanan Apple Pencil.
 
 Setelah itu muat ulang GNOME Shell: tekan `Alt+F2`, ketik `r`, lalu Enter. Pada
-sesi Wayland, log out dan login kembali dengan Ubuntu on Xorg.
+sesi Wayland, log out dan login kembali.
 
 Untuk menghapus semuanya:
 
@@ -90,8 +99,13 @@ Tsunagu-Pad untuk melihat pilihan.
 
 ### Bagikan layar Ubuntu
 
-1. Pilih mode berbagi layar Ubuntu, lalu tentukan monitor dan kualitas.
-2. Ketuk tombol Tsunagu-Pad.
+1. Pilih mode berbagi layar Ubuntu, lalu tentukan monitor dan kualitas. Di
+   Wayland monitor dipilih di jendela izin GNOME.
+2. Ketuk tombol Tsunagu-Pad. Di Wayland, GNOME menampilkan jendela izin pada
+   pertama kali: pilih layar, nyalakan **Allow Remote Interaction** agar iPad
+   bisa mengontrol Ubuntu, dan biarkan **Remember This Selection** menyala.
+   Pilihan diingat; supaya ditanya lagi, cabut izinnya di Pengaturan GNOME atau
+   hapus `~/.config/tsunagupad/portal-token`, lalu nyalakan ulang.
 3. Pindai QR dengan kamera iPad, atau ketik alamatnya di Safari.
 4. Opsional: di Safari pilih Bagikan, lalu Tambahkan ke Layar Utama, supaya
    halaman terbuka layar penuh seperti aplikasi.
@@ -184,7 +198,10 @@ ulang, dihentikan otomatis saat Tsunagu-Pad dinyalakan kembali.
   `vkms` membuat Xorg membeku pada laptop dengan GPU hibrida Intel dan NVIDIA,
   sehingga jalur itu dihapus. Cara yang andal untuk layar tambahan adalah
   adaptor dummy HDMI atau USB-C, lalu pilih monitornya di menu.
-- **Hanya Xorg.** Sesi Wayland belum didukung.
+- **Wayland butuh jendela izin GNOME satu kali.** Tanpa **Allow Remote
+  Interaction** iPad hanya bisa menonton. Tekanan Apple Pencil butuh tablet
+  virtual yang dipetakan ke monitor yang dibagikan lewat pengaturan GNOME; bila
+  gagal, Pencil bekerja sebagai penunjuk biasa.
 - **Satu iPad sekaligus.** Sambungan baru menggantikan yang lama.
 
 ## Keamanan
