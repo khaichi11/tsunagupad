@@ -119,6 +119,7 @@ static void drop_active(App *app)
     if (!c)
         return;
     app->client = NULL;
+    idle_inhibit_set(FALSE);
     share_stop(app);
     input_release_all(app->input);
     tsunagu_event("client", "state", "disconnected", "addr", c->addr, NULL);
@@ -169,6 +170,7 @@ static void handle_hello(Client *c, JsonObject *o)
         soup_websocket_connection_close(old->conn, 4000, "replaced");
     }
     app->client = c;
+    idle_inhibit_set(TRUE);
     tsunagu_event("client", "state", "connected", "addr", c->addr, NULL);
 
     JsonBuilder *b = json_builder_new();

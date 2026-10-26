@@ -55,6 +55,11 @@ back.
 Apple Pencil pressure and tilt go through a virtual tablet device on
 `/dev/uinput`. On Wayland that tablet is mapped to the shared monitor.
 
+On Wayland the capture asks GNOME for at most the preset frame rate, and Intel
+VA-API encoders read the frames as DMA-BUF without a copy through the CPU.
+While an iPad is connected, the automatic screen lock is held off, because GNOME
+refuses new screen sharing sessions while the screen is locked.
+
 Latency is kept low in three ways: the encoder runs in a zero latency mode with
 one second keyframes, the bitrate adapts to packet loss reported by the iPad,
 and the stream asks the receiver to display each frame as soon as it is decoded

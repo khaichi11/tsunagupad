@@ -142,7 +142,11 @@ static gboolean request(Portal *p, const char *iface, const char *method, const 
         } else if (w.response == 1) {
             g_set_error(error, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Izin berbagi layar dibatalkan");
         } else if (w.response != 0) {
-            g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Portal menolak %s", method);
+            if (g_str_equal(method, "CreateSession"))
+                g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                            "GNOME menolak sesi berbagi layar. Biasanya karena layar sedang terkunci: buka kunci, lalu coba lagi");
+            else
+                g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Portal menolak %s", method);
         } else {
             ok = TRUE;
         }
@@ -210,7 +214,10 @@ Portal *portal_open(App *app, GError **error)
 
     /* 1. sesi RemoteDesktop (satu sesi untuk video dan masukan) */
     g_variant_builder_init(&opts, G_VARIANT_TYPE_VARDICT);
-    g_variant_builder_add(&opts, "{sv}", "session_handle_token", g_variant_new_string("tsunagupad"));
+    /* Token unik per proses: sesi lama yang belum sempat ditutup portal tidak menabrak sesi baru. */
+    char *session_token = g_strdup_printf("tsunagupad%d", (int) getpid());
+    g_variant_builder_add(&opts, "{sv}", "session_handle_token", g_variant_new_string(session_token));
+    g_free(session_token);
     if (!request(p, IFACE_RD, "CreateSession", NULL, FALSE, &opts, TIMEOUT_QUICK, &results, error))
         goto fail;
     const char *handle = NULL;

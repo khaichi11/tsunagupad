@@ -400,15 +400,30 @@ gboolean share_start(App *app, GError **error)
         src = g_strdup_printf("videotestsrc is-live=true pattern=ball ! "
                               "video/x-raw,format=BGRx,width=%d,height=%d,framerate=%d/1",
                               app->rw, app->rh, app->fps);
-    else if (app->portal)
+    else if (app->portal) {
         /* Mutter hanya mengirim frame saat layar berubah. keepalive-time mengulang frame
-         * terakhir supaya iPad yang baru tersambung tetap mendapat keyframe, dan
-         * videorate membatasi laju sesuai preset kualitas. */
+         * terakhir supaya iPad yang baru tersambung tetap mendapat keyframe.
+         * max-framerate dinegosiasikan ke mutter: layar 165 Hz tidak lagi menyalin 165
+         * frame per detik ke memori biasa (itu yang membebani gnome-shell); videorate
+         * hanya merapikan sisanya.
+         * Encoder VA bisa membaca DMA-BUF langsung dari GPU tanpa salinan lewat CPU.
+         * Caps dengan dua pilihan membuat GStreamer memilih DMA-BUF bila rantai di
+         * belakangnya menerima, dan jatuh ke memori biasa bila tidak.
+         * TSUNAGUPAD_CAPTURE_CAPS menggantikan filter caps untuk pengujian. */
+        const char *override = g_getenv("TSUNAGUPAD_CAPTURE_CAPS");
+        char *caps;
+        if (override && *override)
+            caps = g_strdup(override);
+        else if (g_str_has_prefix(app->enc_name, "intel"))
+            caps = g_strdup_printf("video/x-raw(memory:DMABuf),max-framerate=%d/1; "
+                                   "video/x-raw,max-framerate=%d/1", app->fps, app->fps);
+        else
+            caps = g_strdup_printf("video/x-raw,max-framerate=%d/1", app->fps);
         src = g_strdup_printf("pipewiresrc fd=%d path=%u do-timestamp=true keepalive-time=500 ! "
-                              "video/x-raw ! videorate drop-only=true max-rate=%d ! "
-                              "video/x-raw",
-                              portal_pipewire_fd(app->portal), portal_node(app->portal), app->fps);
-    else
+                              "capsfilter caps=\"%s\" ! videorate drop-only=true max-rate=%d ! video/x-raw(ANY)",
+                              portal_pipewire_fd(app->portal), portal_node(app->portal), caps, app->fps);
+        g_free(caps);
+    } else
         src = g_strdup_printf("ximagesrc use-damage=false show-pointer=true "
                               "startx=%d starty=%d endx=%d endy=%d ! video/x-raw,framerate=%d/1",
                               app->rx, app->ry, app->rx + app->rw - 1, app->ry + app->rh - 1, app->fps);

@@ -65,6 +65,9 @@ void share_on_answer(App *app, const char *sdp);
 void share_on_ice(App *app, int mline, const char *candidate);
 void share_keyframe(App *app);
 
+/* inhibit.c: tahan kunci layar otomatis selama iPad tersambung */
+void idle_inhibit_set(gboolean on);
+
 /* encoder.c */
 const char *encoder_pick(const char *wanted);
 char *encoder_fragment(const char *name, int w, int h, int fps, int kbps, int max_kbps);

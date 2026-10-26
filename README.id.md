@@ -55,6 +55,11 @@ pena, dan tombol.
 Tekanan dan kemiringan Apple Pencil lewat perangkat tablet virtual di
 `/dev/uinput`. Di Wayland tablet itu dipetakan ke monitor yang dibagikan.
 
+Di Wayland penangkapan meminta GNOME paling banyak sebesar laju frame preset,
+dan encoder Intel VA-API membaca frame sebagai DMA-BUF tanpa salinan lewat CPU.
+Selama iPad tersambung, penguncian layar otomatis ditahan, karena GNOME menolak
+sesi berbagi layar baru selama layar terkunci.
+
 Latensi ditekan dengan tiga cara: encoder berjalan pada mode tanpa penundaan
 dengan keyframe setiap satu detik, bitrate menyesuaikan diri terhadap paket yang
 hilang menurut laporan iPad, dan penerima diminta menampilkan setiap frame
