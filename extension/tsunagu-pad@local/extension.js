@@ -25,6 +25,12 @@ const HOTSPOT_HELPER = '/usr/local/lib/tsunagupad/hotspot-config';
 /* Batas sisi QR dalam piksel. Ukuran modul dihitung dari batas ini supaya QR
  * yang panjang (mis. kata sandi Wi-Fi) tidak melebihi lebar menu Quick Settings. */
 const QR_MAX_PX = 168;
+/* Ukuran layar kedua; rasio mendekati iPad supaya tidak ada bingkai hitam. */
+const SECOND_SIZES = [
+    ['1280x800', 'Ringan'],
+    ['1640x1024', 'Sedang'],
+    ['2360x1640', 'Tajam'],
+];
 const QUALITIES = [
     ['hemat', 'Hemat', 'Hemat data, untuk jaringan lemah'],
     ['lancar', 'Lancar', '720p, paling responsif'],
@@ -36,6 +42,8 @@ const CONFIG_PATH = GLib.build_filenamev([GLib.get_user_config_dir(), 'tsunagupa
 function loadConfig() {
     const defaults = {
         mode: 'share',
+        second: false,
+        secondSize: SECOND_SIZES[0][0],
         monitorName: '',
         quality: 'lancar',
         fullscreen: false,
@@ -419,6 +427,30 @@ class TsunaguPadToggle extends QuickMenuToggle {
         this._monitorMenu.insert_child_above(this._monitorValue, this._monitorMenu.label);
         this.menu.addMenuItem(this._monitorMenu);
 
+        /* Layar kedua memakai monitor virtual kompositor: hanya ada di Wayland,
+           dan di Xorg baris ini tidak pernah ditampilkan. */
+        this._secondSwitch = new PopupMenu.PopupSwitchMenuItem(
+            'Jadikan iPad layar kedua', !!this._config.second);
+        this._secondSwitch.connect('toggled', (item, state) => {
+            this._config.second = state;
+            saveConfig(this._config);
+            if (this._daemonKind === 'share')
+                this._restart().catch(e => this._notify(e.message));
+            this._sync();
+        });
+        this.menu.addMenuItem(this._secondSwitch);
+
+        this._secondControl = new Segmented(SECOND_SIZES.map(([id, label]) => ({id, label})));
+        this._secondControl.connect('selected', (control, id) => {
+            this._config.secondSize = id;
+            saveConfig(this._config);
+            if (this._daemonKind === 'share' && this._config.second)
+                this._restart().catch(e => this._notify(e.message));
+            this._sync();
+        });
+        this._secondItem = this._rowItem(this._secondControl);
+        this.menu.addMenuItem(this._secondItem);
+
         this._qualityControl = new Segmented(QUALITIES.map(([id, label]) => ({id, label})));
         this._qualityControl.connect('selected', (control, id) => this._setQuality(id));
         this._qualityItem = this._rowItem(this._qualityControl);
@@ -566,7 +598,13 @@ class TsunaguPadToggle extends QuickMenuToggle {
         this._hintItem.visible = share && isWayland() && !running && !this._starting;
 
         const selected = this._selectedOutput();
-        this._monitorMenu.visible = share && !isWayland();
+        const wayland = isWayland();
+        const second = wayland && !!this._config.second;
+        this._secondSwitch.visible = share && wayland;
+        this._secondSwitch.setToggleState(second);
+        this._secondItem.visible = share && second;
+        this._secondControl.setSelected(this._config.secondSize);
+        this._monitorMenu.visible = share && !wayland && !second;
         this._monitorValue.text = selected ? this._outputName(selected) : 'Utama';
 
         const quality = QUALITIES.find(([id]) => id === this._config.quality) ?? QUALITIES[1];
@@ -614,6 +652,8 @@ class TsunaguPadToggle extends QuickMenuToggle {
             let argv;
             if (kind === 'share') {
                 argv = [bin, 'share', '--quality', this._config.quality];
+                if (isWayland() && this._config.second)
+                    argv.push('--second', this._config.secondSize);
                 /* Wayland: layar dipilih di jendela izin GNOME. X11: area dari xrandr. */
                 if (!isWayland()) {
                     const out = await this._shareTarget();

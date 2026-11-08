@@ -25,6 +25,7 @@
 struct _Input {
     App *app;
     Portal *portal;         /* sesi Wayland; NULL di X11 */
+    Virtmon *virtmon;       /* layar kedua; masukan lewat sesi Mutter */
     Display *dpy;           /* NULL di Wayland */
     int tablet;             /* fd uinput; -1 berarti Pencil dipakai sebagai mouse */
     gboolean pen_near, pen_touch, pen_mouse_down;
@@ -104,15 +105,30 @@ static int evdev_button(guint xbutton)
 
 static void fake_motion(Input *in, int x, int y)
 {
-    if (in->portal)
+    if (in->virtmon) {
+        /* Sesi Mutter memakai pecahan 0..1 terhadap monitor virtual. */
+        virtmon_pointer(in->virtmon, (double) x / MAX(in->app->rw, 1),
+                        (double) y / MAX(in->app->rh, 1));
+    } else if (in->portal) {
         portal_motion(in->portal, x, y);
-    else
-        fake_motion(in, x, y);
+    } else {
+        XTestFakeMotionEvent(in->dpy, -1, x, y, CurrentTime);
+    }
 }
 
 /* Nomor tombol gaya X: 1-3 mouse, 4-7 roda (atas, bawah, kiri, kanan). */
 static void fake_button(Input *in, guint b, gboolean down)
 {
+    if (in->virtmon) {
+        if (b >= 4) {
+            if (down)
+                virtmon_scroll(in->virtmon, b >= 6 ? ((b == 7) ? 1 : -1) : 0,
+                               b >= 6 ? 0 : ((b == 5) ? 1 : -1));
+            return;
+        }
+        virtmon_button(in->virtmon, evdev_button(b), down);
+        return;
+    }
     if (!in->portal) {
         XTestFakeButtonEvent(in->dpy, b, down, CurrentTime);
         return;
@@ -127,7 +143,9 @@ static void fake_button(Input *in, guint b, gboolean down)
 
 static void fake_key(Input *in, int evdev, gboolean down)
 {
-    if (in->portal)
+    if (in->virtmon)
+        virtmon_key(in->virtmon, evdev, down);
+    else if (in->portal)
         portal_key(in->portal, evdev, down);
     else
         XTestFakeKeyEvent(in->dpy, evdev + 8, down, CurrentTime);   /* keycode X = evdev + 8 */
@@ -136,7 +154,7 @@ static void fake_key(Input *in, int evdev, gboolean down)
 static void fake_flush(Input *in)
 {
     if (in->dpy)
-        fake_flush(in);
+        XFlush(in->dpy);
 }
 
 /* ---------- tablet virtual (uinput) ---------- */
@@ -506,6 +524,17 @@ static void text_event(Input *in, JsonObject *o)
 Input *input_new(App *app)
 {
     Display *dpy = NULL;
+    if (app->virtmon) {
+        /* Layar kedua: semua masukan lewat sesi Mutter, tanpa X11 dan tanpa
+         * tablet uinput, karena monitor virtual tidak punya antarmuka tablet. */
+        Input *in = g_new0(Input, 1);
+        in->app = app;
+        in->virtmon = app->virtmon;
+        in->tablet = -1;
+        in->keys = g_hash_table_new(NULL, NULL);
+        tsunagu_event("input", "pen", "layar-kedua", NULL);
+        return in;
+    }
     if (app->portal) {
         if (!portal_can_control(app->portal)) {
             tsunagu_event("warning", "message",

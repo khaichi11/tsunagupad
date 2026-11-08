@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
 #include <sys/prctl.h>
 #include <sys/random.h>
 #include <sys/stat.h>
@@ -312,7 +313,7 @@ static int cmd_share(int argc, char **argv)
 {
     App app = { 0 };
     int port = 8765;
-    char *region = NULL, *web_dir = NULL;
+    char *region = NULL, *second = NULL, *web_dir = NULL;
     gboolean no_input = FALSE, reset_token = FALSE;
     app.quality = "lancar";
     app.encoder = "auto";
@@ -322,6 +323,7 @@ static int cmd_share(int argc, char **argv)
     GOptionEntry entries[] = {
         { "port", 'p', 0, G_OPTION_ARG_INT, &port, "Port HTTP (bawaan 8765)", "PORT" },
         { "region", 'r', 0, G_OPTION_ARG_STRING, &region, "Area layar yang dibagikan", "X,Y,W,H" },
+        { "second", 0, 0, G_OPTION_ARG_STRING, &second, "iPad jadi layar kedua, mis. 1280x800 (Wayland)", "WxH" },
         { "quality", 'q', 0, G_OPTION_ARG_STRING, &app.quality, "hemat | lancar | seimbang | tajam", "Q" },
         { "encoder", 'e', 0, G_OPTION_ARG_STRING, &app.encoder, "auto | nvidia | intel-lp | intel | cpu", "ENC" },
         { "pen", 0, 0, G_OPTION_ARG_STRING, &app.pen_mode, "Apple Pencil: auto | tablet | mouse", "MODE" },
@@ -368,14 +370,28 @@ static int cmd_share(int argc, char **argv)
             return fail("Plugin GStreamer untuk PipeWire belum terpasang. Jalankan install.sh (atau: sudo apt install gstreamer1.0-pipewire)");
         gst_object_unref(pw);
         GError *perr = NULL;
-        app.portal = portal_open(&app, &perr);
-        if (!app.portal)
-            return fail(perr ? perr->message : "Sesi layar Wayland gagal dibuka");
-        int px, py;
-        portal_geometry(app.portal, &px, &py, &app.rw, &app.rh);
-        app.rx = app.ry = 0;
-        if (app.rw < 16 || app.rh < 16)
-            return fail("Ukuran layar dari portal tidak valid");
+        if (second) {
+            if (!virtmon_available())
+                return fail("Layar kedua hanya tersedia di sesi Wayland GNOME.");
+            int vw = 0, vh = 0;
+            if (sscanf(second, "%dx%d", &vw, &vh) != 2 || vw < 320 || vh < 240)
+                return fail("Format --second harus LEBARxTINGGI, mis. 1280x800");
+            GError *verr = NULL;
+            app.virtmon = virtmon_open(vw & ~1, vh & ~1, FALSE, &verr);
+            if (!app.virtmon)
+                return fail(verr ? verr->message : "Monitor virtual gagal dibuat");
+            virtmon_size(app.virtmon, &app.rw, &app.rh);
+            app.rx = app.ry = 0;
+        } else {
+            app.portal = portal_open(&app, &perr);
+            if (!app.portal)
+                return fail(perr ? perr->message : "Sesi layar Wayland gagal dibuka");
+            int px, py;
+            portal_geometry(app.portal, &px, &py, &app.rw, &app.rh);
+            app.rx = app.ry = 0;
+            if (app.rw < 16 || app.rh < 16)
+                return fail("Ukuran layar dari portal tidak valid");
+        }
     } else if (region) {
         if (sscanf(region, "%d,%d,%d,%d", &app.rx, &app.ry, &app.rw, &app.rh) != 4 || app.rw < 16 || app.rh < 16)
             return fail("Format --region harus X,Y,LEBAR,TINGGI");
@@ -442,6 +458,7 @@ static int cmd_share(int argc, char **argv)
     server_stop(&app);
     share_stop(&app);
     input_free(app.input);
+    virtmon_close(app.virtmon);
     portal_free(app.portal);
     g_main_loop_unref(app.loop);
     g_ptr_array_unref(addrs);
@@ -555,12 +572,237 @@ static int cmd_qr(int argc, char **argv)
     return 0;
 }
 
+/* ---------- kendali dari jarak jauh (SSH) ---------- */
+
+static char *runtime_path(const char *name)
+{
+    const char *dir = g_get_user_runtime_dir();
+    return g_build_filename(dir, name, NULL);
+}
+
+static char *session_log_path(void)
+{
+    char *dir = g_build_filename(g_get_user_cache_dir(), "tsunagupad", NULL);
+    g_mkdir_with_parents(dir, 0700);
+    char *path = g_build_filename(dir, "session.log", NULL);
+    g_free(dir);
+    return path;
+}
+
+/* Lewat SSH tidak ada variabel sesi grafis, padahal portal dan kompositor
+ * hanya bisa dihubungi melalui bus sesi pengguna. */
+static void adopt_session_env(void)
+{
+    const char *runtime = g_get_user_runtime_dir();
+    if (!g_getenv("DBUS_SESSION_BUS_ADDRESS")) {
+        char *bus = g_build_filename(runtime, "bus", NULL);
+        if (g_file_test(bus, G_FILE_TEST_EXISTS)) {
+            char *value = g_strdup_printf("unix:path=%s", bus);
+            g_setenv("DBUS_SESSION_BUS_ADDRESS", value, TRUE);
+            g_free(value);
+        }
+        g_free(bus);
+    }
+    if (!g_getenv("WAYLAND_DISPLAY")) {
+        GDir *dir = g_dir_open(runtime, 0, NULL);
+        const char *name;
+        while (dir && (name = g_dir_read_name(dir))) {
+            if (g_str_has_prefix(name, "wayland-") && !g_str_has_suffix(name, ".lock")) {
+                g_setenv("WAYLAND_DISPLAY", name, TRUE);
+                break;
+            }
+        }
+        if (dir)
+            g_dir_close(dir);
+    }
+    if (!g_getenv("DISPLAY"))
+        g_setenv("DISPLAY", ":0", TRUE);
+}
+
+static pid_t running_share(void)
+{
+    GDir *dir = g_dir_open("/proc", 0, NULL);
+    const char *name;
+    pid_t found = 0;
+    while (dir && (name = g_dir_read_name(dir))) {
+        char *end;
+        pid_t pid = (pid_t) strtol(name, &end, 10);
+        if (*end || pid <= 1 || pid == getpid())
+            continue;
+        if (still_matches(pid, match_share, NULL)) {
+            found = pid;
+            break;
+        }
+    }
+    if (dir)
+        g_dir_close(dir);
+    return found;
+}
+
+/* Baris "ready" terakhir dari log sesi; berisi alamat untuk iPad. */
+static char *last_ready_urls(void)
+{
+    char *log = session_log_path();
+    char *data = NULL;
+    g_file_get_contents(log, &data, NULL, NULL);
+    g_free(log);
+    if (!data)
+        return NULL;
+    char *urls = NULL;
+    char **lines = g_strsplit(data, "\n", -1);
+    for (int i = 0; lines[i]; i++) {
+        const char *key = strstr(lines[i], "\"urls\":\"");
+        if (!key)
+            continue;
+        key += 8;
+        const char *end = strchr(key, '"');
+        if (end) {
+            g_free(urls);
+            urls = g_strndup(key, end - key);
+        }
+    }
+    g_strfreev(lines);
+    g_free(data);
+    return urls;
+}
+
+static int cmd_status(void);
+
+static int cmd_on(int argc, char **argv)
+{
+    adopt_session_env();
+    if (running_share()) {
+        g_print("Tsunagu-Pad sudah berjalan.\n");
+        return cmd_status();
+    }
+
+    char *self = g_file_read_link("/proc/self/exe", NULL);
+    GPtrArray *args = g_ptr_array_new();
+    g_ptr_array_add(args, self ? self : (char *) "tsunagupad");
+    g_ptr_array_add(args, "share");
+    for (int i = 1; i < argc; i++)
+        g_ptr_array_add(args, argv[i]);
+    g_ptr_array_add(args, NULL);
+
+    char *log = session_log_path();
+    int fd = open(log, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
+        g_free(log);
+        return fail("Tidak bisa menulis log sesi");
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        setsid();
+        dup2(fd, STDOUT_FILENO);
+        dup2(fd, STDERR_FILENO);
+        close(fd);
+        prctl(PR_SET_PDEATHSIG, 0);
+        execv(args->pdata[0], (char **) args->pdata);
+        _exit(127);
+    }
+    close(fd);
+    g_ptr_array_free(args, TRUE);
+    if (pid < 0) {
+        g_free(log);
+        return fail("Gagal menjalankan proses berbagi layar");
+    }
+
+    char *pidfile = runtime_path("tsunagupad.pid");
+    char *text = g_strdup_printf("%d\n", (int) pid);
+    g_file_set_contents(pidfile, text, -1, NULL);
+    g_free(text);
+    g_free(pidfile);
+
+    g_print("Menunggu izin berbagi layar di layar laptop…\n");
+    for (int i = 0; i < 120; i++) {
+        g_usleep(500 * 1000);
+        char *urls = last_ready_urls();
+        if (urls) {
+            g_print("Aktif. Buka di iPad:\n");
+            char **list = g_strsplit(urls, " ", -1);
+            for (int u = 0; list[u]; u++)
+                g_print("  %s\n", list[u]);
+            g_strfreev(list);
+            g_free(urls);
+            g_free(log);
+            return 0;
+        }
+        if (!running_share()) {
+            g_printerr("Gagal. Lihat %s\n", log);
+            g_free(log);
+            return 1;
+        }
+    }
+    g_print("Belum ada jawaban. Dialog izin menunggu di layar laptop; lihat %s\n", log);
+    g_free(log);
+    return 0;
+}
+
+static int cmd_off(void)
+{
+    pid_t pid = running_share();
+    if (!pid) {
+        g_print("Tsunagu-Pad tidak sedang berjalan.\n");
+        return 0;
+    }
+    stop_stale(match_share, NULL);
+    g_print("Tsunagu-Pad dihentikan.\n");
+    return 0;
+}
+
+static int cmd_status(void)
+{
+    pid_t pid = running_share();
+    g_print("Berbagi layar : %s\n", pid ? "aktif" : "mati");
+    if (pid) {
+        char *urls = last_ready_urls();
+        if (urls) {
+            char **list = g_strsplit(urls, " ", -1);
+            for (int u = 0; list[u]; u++)
+                g_print("Alamat        : %s\n", list[u]);
+            g_strfreev(list);
+        }
+        g_free(urls);
+    }
+    char *out = NULL;
+    if (g_spawn_command_line_sync("systemctl is-active tsunagupad-hotspot.service",
+                                  &out, NULL, NULL, NULL) && out) {
+        g_strstrip(out);
+        g_print("Hotspot       : %s\n", out);
+    }
+    g_free(out);
+    return pid ? 0 : 1;
+}
+
+static int cmd_hotspot(const char *what)
+{
+    if (g_strcmp0(what, "on") != 0 && g_strcmp0(what, "off") != 0)
+        return fail("Pemakaian: tsunagupad hotspot on|off");
+    char *cmd = g_strdup_printf("systemctl %s tsunagupad-hotspot.service",
+                                g_str_equal(what, "on") ? "start" : "stop");
+    int status = 0;
+    char *err = NULL;
+    gboolean ok = g_spawn_command_line_sync(cmd, NULL, &err, &status, NULL) && status == 0;
+    g_free(cmd);
+    if (!ok) {
+        g_printerr("%s", err && *err ? err : "Gagal mengubah hotspot.\n");
+        g_printerr("Lewat SSH, polkit meminta hak administrator. Coba dengan sudo.\n");
+    } else {
+        g_print("Hotspot %s.\n", g_str_equal(what, "on") ? "dinyalakan" : "dimatikan");
+    }
+    g_free(err);
+    return ok ? 0 : 1;
+}
+
 static void usage(void)
 {
     g_print("Tsunagu-Pad %s, satukan layar Ubuntu dan iPad\n\n"
             "Pemakaian:\n"
             "  tsunagupad share   [--region X,Y,W,H] [--quality Q] [--encoder E] ...\n"
             "  tsunagupad receive [--name NAMA] [--fullscreen] ...\n"
+            "  tsunagupad on | off | status\n"
+            "  tsunagupad hotspot on|off\n"
             "  tsunagupad probe\n"
             "  tsunagupad qr TEKS\n\n"
             "Tambahkan --help setelah perintah untuk semua opsi.\n", TSUNAGUPAD_VERSION);
@@ -580,6 +822,14 @@ int main(int argc, char **argv)
         return cmd_share(argc - 1, argv + 1);
     if (g_str_equal(cmd, "receive"))
         return cmd_receive(argc - 1, argv + 1);
+    if (g_str_equal(cmd, "on"))
+        return cmd_on(argc - 1, argv + 1);
+    if (g_str_equal(cmd, "off"))
+        return cmd_off();
+    if (g_str_equal(cmd, "status"))
+        return cmd_status();
+    if (g_str_equal(cmd, "hotspot"))
+        return cmd_hotspot(argc > 2 ? argv[2] : "");
     if (g_str_equal(cmd, "probe"))
         return cmd_probe();
     if (g_str_equal(cmd, "qr"))

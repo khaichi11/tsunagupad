@@ -229,6 +229,9 @@ TEXTS = {
         "airplay_sub": "The iPad screen shown on Ubuntu through AirPlay",
         "airplay": "AirPlay",
         "airplay_foot": "Control Center, then Screen Mirroring, then pick Tsunagu-Pad Ubuntu",
+        "second_sub": "The iPad as a real second screen, not a copy of one",
+        "second_label": "second screen",
+        "second_foot": "Drag a window to the right and it keeps running on the iPad.",
     },
     "id": {
         "share_sub": "Layar Ubuntu kamu di iPad, dikendalikan dari iPad",
@@ -238,6 +241,9 @@ TEXTS = {
         "airplay_sub": "Layar iPad tampil di Ubuntu lewat AirPlay",
         "airplay": "AirPlay",
         "airplay_foot": "Pusat Kontrol, lalu Pencerminan Layar, lalu pilih Tsunagu-Pad Ubuntu",
+        "second_sub": "iPad sebagai layar kedua sungguhan, bukan salinan layar",
+        "second_label": "layar kedua",
+        "second_foot": "Seret jendela ke kanan, dan jendela itu berjalan di iPad.",
     },
 }
 
@@ -366,6 +372,65 @@ def frame_airplay(i, total, lang="en"):
     return footer(img, s["airplay_foot"]).convert("RGB")
 
 
+def window(layer, box, title_w, accent=False):
+    """Jendela aplikasi sederhana: bilah judul dan beberapa baris isi."""
+    d = ImageDraw.Draw(layer)
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    d.rounded_rectangle(box, 8, fill=(30, 39, 52, 255), outline=EDGE + (255,), width=2)
+    d.rounded_rectangle([x0, y0, x1, y0 + max(10, h * 0.16)], 8, fill=(40, 51, 67, 255))
+    d.ellipse([x0 + 9, y0 + 7, x0 + 15, y0 + 13], fill=MARK + (255,))
+    d.rounded_rectangle([x0 + 24, y0 + 8, x0 + 24 + title_w, y0 + 12], 2,
+                        fill=(ACCENT if accent else MUTED) + (255,))
+    for row in range(3):
+        top = y0 + h * (0.34 + row * 0.19)
+        d.rounded_rectangle([x0 + w * 0.08, top, x0 + w * (0.86 - row * 0.16), top + max(4, h * 0.07)],
+                            3, fill=(58, 72, 90, 255))
+
+
+def lerp_box(a, b, t):
+    return tuple(a[i] + (b[i] - a[i]) * t for i in range(4))
+
+
+def frame_second(i, total, lang="en"):
+    """Adegan 3: jendela diseret dari layar Ubuntu ke layar kedua di iPad."""
+    s = TEXTS[lang]
+    img = header(backdrop(), s["second_sub"])
+    img, lap = laptop(img, 60, 150, 348, 226)
+    img, tab = tablet(img, 520, 152, 300, 214)
+
+    d = ImageDraw.Draw(img)
+    gradient_screen(d, lap, (26, 34, 46), (17, 23, 32))
+    gradient_screen(d, tab, (24, 31, 42), (16, 21, 30))
+
+    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    # Jendela yang tinggal diam di layar laptop.
+    window(layer, (lap[0] + 14, lap[1] + 16, lap[0] + 150, lap[1] + 110), 48)
+
+    start = (lap[0] + 120, lap[1] + 60, lap[2] - 14, lap[3] - 16)
+    end = (tab[0] + 10, tab[1] + 10, tab[2] - 10, tab[3] - 10)
+    hold = total * 0.18
+    glide = ease(max(0.0, (i - hold)) / max(1.0, total * 0.6))
+    box = lerp_box(start, end, glide)
+    shadow_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow_layer).rounded_rectangle(
+        [box[0], box[1] + 10, box[2], box[3] + 10], 10, fill=(0, 0, 0, 120))
+    layer.alpha_composite(shadow_layer.filter(ImageFilter.GaussianBlur(14)))
+    window(layer, box, 60, accent=True)
+
+    # Kursor yang menarik jendela itu.
+    pen_cursor(layer, box[0] + 34, box[1] + 10, glide > 0.02 and glide < 0.99)
+
+    phase = (i / total) * 2.2 % 1.0
+    stream(layer, (412, 250), (512, 250), phase, ACCENT, s["second_label"], 96)
+    img = Image.alpha_composite(img, layer)
+
+    d = ImageDraw.Draw(img)
+    text(d, "Ubuntu", (234, 404), 14, MUTED, BODY_MED, center=True)
+    text(d, "iPad", (670, 382), 14, MUTED, BODY_MED, center=True)
+    return footer(img, s["second_foot"]).convert("RGB")
+
+
 def render(name, maker, frames, lang):
     out = pathlib.Path("docs/media") / name
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -389,5 +454,7 @@ if __name__ == "__main__":
         raise SystemExit("ffmpeg tidak ditemukan")
     render("demo-share.gif", frame_share, 96, "en")
     render("demo-share-id.gif", frame_share, 96, "id")
+    render("demo-second.gif", frame_second, 80, "en")
+    render("demo-second-id.gif", frame_second, 80, "id")
     render("demo-airplay.gif", frame_airplay, 56, "en")
     render("demo-airplay-id.gif", frame_airplay, 56, "id")

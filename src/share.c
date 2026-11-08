@@ -396,7 +396,27 @@ gboolean share_start(App *app, GError **error)
     app->kbps_now = encoder_can_retune(app->enc_name) ? MIN(app->kbps, KBPS_START) : app->kbps;
 
     char *src;
-    if (app->test_source)
+    if (app->virtmon) {
+        /* Ukuran monitor virtual mengikuti caps yang diminta di sini. Layar
+         * kedua sering diam, dan aliran yang berhenti membuat dekoder di iPad
+         * menyusun ulang setiap kali gambar berubah lagi. vacompositor berdetak
+         * pada laju tetap dan mengulang frame terakhir, seluruhnya di GPU. */
+        if (g_str_has_prefix(app->enc_name, "intel"))
+            src = g_strdup_printf(
+                "pipewiresrc path=%u do-timestamp=true keepalive-time=500 ! "
+                "video/x-raw,width=%d,height=%d ! "
+                "queue max-size-buffers=1 leaky=downstream ! vapostproc ! "
+                "video/x-raw(memory:VAMemory),format=NV12,width=%d,height=%d ! mix.sink_0 "
+                "vacompositor name=mix force-live=true latency=0 ! "
+                "video/x-raw(memory:VAMemory),format=NV12,width=%d,height=%d,framerate=%d/1",
+                virtmon_node(app->virtmon), app->rw, app->rh, app->rw, app->rh,
+                app->rw, app->rh, app->fps);
+        else
+            src = g_strdup_printf("pipewiresrc path=%u do-timestamp=true keepalive-time=500 ! "
+                                  "video/x-raw,width=%d,height=%d ! "
+                                  "videorate max-rate=%d ! video/x-raw(ANY)",
+                                  virtmon_node(app->virtmon), app->rw, app->rh, app->fps);
+    } else if (app->test_source)
         src = g_strdup_printf("videotestsrc is-live=true pattern=ball ! "
                               "video/x-raw,format=BGRx,width=%d,height=%d,framerate=%d/1",
                               app->rw, app->rh, app->fps);

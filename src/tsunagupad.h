@@ -15,6 +15,7 @@
 typedef struct _Input Input;
 typedef struct _Client Client;
 typedef struct _Portal Portal;
+typedef struct _Virtmon Virtmon;
 
 typedef struct {
     /* opsi dari command line */
@@ -23,6 +24,7 @@ typedef struct {
     gboolean have_region;
     char *backend;              /* auto | x11 | portal */
     Portal *portal;             /* sesi Wayland (xdg-desktop-portal); NULL di sesi X11 */
+    Virtmon *virtmon;           /* layar kedua lewat monitor virtual Mutter */
     char *quality;              /* hemat | lancar | seimbang | tajam */
     char *encoder;              /* auto | nvidia | intel | cpu */
     char *pen_mode;             /* auto | tablet | mouse */
@@ -75,6 +77,17 @@ gboolean encoder_can_retune(const char *name);
 
 /* playout.c */
 void playout_delay_attach(GstElement *payloader);
+
+/* virtmon.c: layar kedua lewat monitor virtual Mutter, hanya di Wayland */
+gboolean virtmon_available(void);
+Virtmon *virtmon_open(int width, int height, gboolean hide_cursor, GError **error);
+guint32 virtmon_node(Virtmon *v);
+void virtmon_size(Virtmon *v, int *w, int *h);
+void virtmon_pointer(Virtmon *v, double x, double y);
+void virtmon_button(Virtmon *v, int button, gboolean press);
+void virtmon_scroll(Virtmon *v, int dx, int dy);
+void virtmon_key(Virtmon *v, int keycode, gboolean press);
+void virtmon_close(Virtmon *v);
 
 /* portal.c: tangkap layar dan masukan di sesi Wayland (xdg-desktop-portal) */
 Portal *portal_open(App *app, GError **error);   /* menunggu jendela izin GNOME */
