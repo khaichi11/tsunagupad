@@ -404,6 +404,55 @@ static gboolean place_virtual_monitor(gpointer data)
     return G_SOURCE_REMOVE;
 }
 
+/* Pengukur bawaan untuk mencari sumber patah-patah: laju frame di dua titik
+ * dan jarak terlama antar frame, yang justru paling terasa di mata. */
+typedef struct {
+    const char *label;
+    guint frames;
+    gint64 window, last;
+    double gap_max_ms;
+} Meter;
+
+static Meter meter_src = { "sumber" };
+static Meter meter_enc = { "encoder" };
+
+static GstPadProbeReturn meter_probe(GstPad *pad, GstPadProbeInfo *info, gpointer data)
+{
+    Meter *m = data;
+    gint64 t = g_get_monotonic_time();
+    if (m->last)
+        m->gap_max_ms = MAX(m->gap_max_ms, (t - m->last) / 1000.0);
+    m->last = t;
+    m->frames++;
+    if (!m->window)
+        m->window = t;
+    if (t - m->window >= 2 * G_USEC_PER_SEC) {
+        double secs = (t - m->window) / (double) G_USEC_PER_SEC;
+        g_printerr("pipeline %s: %.1f fps, jeda antar frame terlama %.0f ms\n",
+                   m->label, m->frames / secs, m->gap_max_ms);
+        m->frames = 0;
+        m->gap_max_ms = 0;
+        m->window = t;
+    }
+    return GST_PAD_PROBE_OK;
+}
+
+static void meter_attach(GstElement *pipeline, const char *name, Meter *m)
+{
+    GstElement *el = gst_bin_get_by_name(GST_BIN(pipeline), name);
+    if (!el)
+        return;
+    GstPad *pad = gst_element_get_static_pad(el, "src");
+    if (pad) {
+        memset(m, 0, sizeof *m);
+        m->label = (m == &meter_src) ? "sumber" : "encoder";
+        gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER | GST_PAD_PROBE_TYPE_BUFFER_LIST,
+                          meter_probe, m, NULL);
+        gst_object_unref(pad);
+    }
+    gst_object_unref(el);
+}
+
 gboolean share_start(App *app, GError **error)
 {
     share_stop(app);
@@ -468,7 +517,7 @@ gboolean share_start(App *app, GError **error)
 
     /* queue leaky: kalau encoder sibuk, frame lama dibuang, bukan ditumpuk (anti-lag). */
     char *desc = g_strdup_printf(
-        "%s ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream ! %s ! "
+        "%s ! identity name=cap silent=true ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream ! %s ! "
         "video/x-h264,profile=constrained-baseline,stream-format=byte-stream ! "
         "h264parse config-interval=-1 ! "
         "rtph264pay name=pay config-interval=-1 aggregate-mode=zero-latency mtu=1200 ! "
@@ -546,6 +595,11 @@ gboolean share_start(App *app, GError **error)
     if (app->enc && encoder_can_retune(app->enc_name))
         app->stats_timer = g_timeout_add_full(G_PRIORITY_DEFAULT, 1000, request_stats,
                                               session_ref(s), session_unref);
+
+    if (debug_enabled()) {
+        meter_attach(pipeline, "cap", &meter_src);
+        meter_attach(pipeline, "pay", &meter_enc);
+    }
 
     if (gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
         share_stop(app);
