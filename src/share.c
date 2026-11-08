@@ -388,6 +388,22 @@ static gboolean on_bus(GstBus *bus, GstMessage *m, gpointer data)
 
 /* ---------- API ---------- */
 
+static gboolean place_virtual_monitor(gpointer data)
+{
+    Session *s = data;
+    if (!session_alive(s) || !s->app->virtmon)
+        return G_SOURCE_REMOVE;
+    GError *err = NULL;
+    if (!virtmon_place(s->app->virtmon, &err)) {
+        tsunagu_event("warning", "message",
+                      err ? err->message : "Monitor virtual gagal ditempatkan", NULL);
+        g_clear_error(&err);
+    } else {
+        tsunagu_event("second", "state", "placed", NULL);
+    }
+    return G_SOURCE_REMOVE;
+}
+
 gboolean share_start(App *app, GError **error)
 {
     share_stop(app);
@@ -535,6 +551,12 @@ gboolean share_start(App *app, GError **error)
         share_stop(app);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Pipeline tidak bisa dijalankan");
         return FALSE;
+    }
+    if (app->virtmon) {
+        /* Monitor virtual baru dibuat Mutter setelah aliran dinegosiasikan,
+         * jadi penempatannya dilakukan sesaat setelah pipeline berjalan. */
+        g_timeout_add_full(G_PRIORITY_DEFAULT, 400, place_virtual_monitor, session_ref(s),
+                           session_unref);
     }
     tsunagu_event("stream", "state", "starting", NULL);
     return TRUE;

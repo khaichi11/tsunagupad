@@ -87,6 +87,7 @@ void virtmon_pointer(Virtmon *v, double x, double y);
 void virtmon_button(Virtmon *v, int button, gboolean press);
 void virtmon_scroll(Virtmon *v, int dx, int dy);
 void virtmon_key(Virtmon *v, int keycode, gboolean press);
+gboolean virtmon_place(Virtmon *v, GError **error);
 void virtmon_close(Virtmon *v);
 
 /* portal.c: tangkap layar dan masukan di sesi Wayland (xdg-desktop-portal) */
