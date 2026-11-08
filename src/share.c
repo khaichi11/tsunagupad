@@ -413,6 +413,7 @@ typedef struct {
     double gap_max_ms;
 } Meter;
 
+static Meter meter_raw = { "kompositor" };
 static Meter meter_src = { "sumber" };
 static Meter meter_enc = { "encoder" };
 
@@ -445,7 +446,7 @@ static void meter_attach(GstElement *pipeline, const char *name, Meter *m)
     GstPad *pad = gst_element_get_static_pad(el, "src");
     if (pad) {
         memset(m, 0, sizeof *m);
-        m->label = (m == &meter_src) ? "sumber" : "encoder";
+        m->label = (m == &meter_raw) ? "kompositor" : (m == &meter_src) ? "sumber" : "encoder";
         gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER | GST_PAD_PROBE_TYPE_BUFFER_LIST,
                           meter_probe, m, NULL);
         gst_object_unref(pad);
@@ -469,7 +470,7 @@ gboolean share_start(App *app, GError **error)
         if (g_str_has_prefix(app->enc_name, "intel"))
             src = g_strdup_printf(
                 "pipewiresrc path=%u do-timestamp=true keepalive-time=500 ! "
-                "video/x-raw,width=%d,height=%d ! "
+                "video/x-raw,width=%d,height=%d ! identity name=raw silent=true ! "
                 "queue max-size-buffers=1 leaky=downstream ! vapostproc ! "
                 "video/x-raw(memory:VAMemory),format=NV12,width=%d,height=%d ! mix.sink_0 "
                 "vacompositor name=mix force-live=true latency=0 ! "
@@ -597,6 +598,7 @@ gboolean share_start(App *app, GError **error)
                                               session_ref(s), session_unref);
 
     if (debug_enabled()) {
+        meter_attach(pipeline, "raw", &meter_raw);
         meter_attach(pipeline, "cap", &meter_src);
         meter_attach(pipeline, "pay", &meter_enc);
     }
