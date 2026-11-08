@@ -454,6 +454,221 @@ static void meter_attach(GstElement *pipeline, const char *name, Meter *m)
     gst_object_unref(el);
 }
 
+/* ---------- layar kedua: gambar + kursor asli dari laptop ---------- */
+
+/* Monitor virtual Mutter hanya digambar ulang kalau isinya berubah, jadi
+ * gerakan kursor saja tidak menghasilkan frame baru. Yang tetap dikirim Mutter
+ * adalah metadata kursor: posisi dan gambarnya, puluhan kali per detik.
+ *
+ * Aliran itu dibaca langsung oleh src/pwcap.c. Frame layar terakhir disimpan di
+ * sini, kursor sungguhan ditempel di atas salinannya, lalu hasilnya didorong ke
+ * pipeline lewat appsrc. Dari sisi iPad, kursornya terlihat seperti di monitor
+ * biasa: selalu ada dan ikut bergerak meski layarnya diam. */
+#define FEED_GAP_US 12000       /* jarak minimal antar frame yang didorong */
+
+static struct {
+    GstElement *src;            /* appsrc */
+    Pwcap *cap;
+    GMutex lock;
+    guint8 *bg;                 /* frame layar terakhir, tanpa kursor */
+    gsize bg_size;
+    int width, height, stride;
+    guint8 *cursor;             /* gambar kursor BGRA, alpha sudah terkali */
+    int cursor_w, cursor_h;
+    int x, y;                   /* sudut kiri-atas gambar kursor */
+    gboolean cursor_valid;
+    gint64 last_push;
+    guint pending;
+    guint keepalive;            /* denyut agar pencampur tidak pernah kehabisan frame */
+    int fps;
+} feed;
+
+/* Dipanggil dengan feed.lock dipegang. */
+static void cursor_blend(guint8 *data, int stride, int w, int h)
+{
+    for (int cy = 0; cy < feed.cursor_h; cy++) {
+        int py = feed.y + cy;
+        if (py < 0 || py >= h)
+            continue;
+        const guint8 *s = feed.cursor + (gsize) cy * feed.cursor_w * 4;
+        guint8 *d = data + (gsize) py * stride;
+        for (int cx = 0; cx < feed.cursor_w; cx++) {
+            int px = feed.x + cx;
+            if (px < 0 || px >= w)
+                continue;
+            const guint8 *sp = s + cx * 4;
+            guint a = sp[3];
+            if (!a)
+                continue;
+            guint8 *dp = d + (gsize) px * 4;
+            guint inv = 255 - a;
+            for (int c = 0; c < 3; c++)
+                dp[c] = (guint8) MIN(255u, sp[c] + (dp[c] * inv + 127) / 255);
+        }
+    }
+}
+
+static void feed_push(void)
+{
+    g_mutex_lock(&feed.lock);
+    if (!feed.src || !feed.bg) {
+        g_mutex_unlock(&feed.lock);
+        return;
+    }
+    GstBuffer *out = gst_buffer_new_allocate(NULL, feed.bg_size, NULL);
+    GstMapInfo map;
+    if (!gst_buffer_map(out, &map, GST_MAP_WRITE)) {
+        gst_buffer_unref(out);
+        g_mutex_unlock(&feed.lock);
+        return;
+    }
+    memcpy(map.data, feed.bg, feed.bg_size);
+    if (feed.cursor_valid && feed.cursor)
+        cursor_blend(map.data, feed.stride, feed.width, feed.height);
+    gst_buffer_unmap(out, &map);
+
+    GstElement *src = gst_object_ref(feed.src);
+    int fps = feed.fps;
+    feed.last_push = g_get_monotonic_time();
+    g_mutex_unlock(&feed.lock);
+
+    /* Cap waktu diisi dari jam pipeline. Kalau diserahkan ke appsrc, frame
+     * pertama bisa bercap waktu sebelum pipeline punya base time dan pencampur
+     * akan menunggu selamanya. */
+    GstClock *clock = gst_element_get_clock(src);
+    if (clock) {
+        GstClockTime base = gst_element_get_base_time(src);
+        GstClockTime now = gst_clock_get_time(clock);
+        GST_BUFFER_PTS(out) = now > base ? now - base : 0;
+        GST_BUFFER_DTS(out) = GST_BUFFER_PTS(out);
+        GST_BUFFER_DURATION(out) = GST_SECOND / MAX(fps, 1);
+        gst_object_unref(clock);
+    }
+
+    GstFlowReturn ret = GST_FLOW_OK;
+    g_signal_emit_by_name(src, "push-buffer", out, &ret);
+    if (g_getenv("TSUNAGUPAD_DEBUG")) {
+        static int n;
+        static gint64 t0;
+        gint64 now = g_get_monotonic_time();
+        n++;
+        if (!t0)
+            t0 = now;
+        if (now - t0 > 2000000) {
+            g_printerr("pipeline layar kedua: %.1f fps dikirim ke encoder (%s)\n",
+                       n / ((now - t0) / 1e6), gst_flow_get_name(ret));
+            n = 0;
+            t0 = now;
+        }
+    }
+    gst_buffer_unref(out);
+    gst_object_unref(src);
+}
+
+static gboolean feed_push_later(gpointer data)
+{
+    g_mutex_lock(&feed.lock);
+    feed.pending = 0;
+    g_mutex_unlock(&feed.lock);
+    feed_push();
+    return G_SOURCE_REMOVE;
+}
+
+/* Dorong sekarang bila jedanya sudah cukup; kalau belum, satu dorongan susulan
+ * dijadwalkan supaya posisi kursor terakhir tetap sampai tanpa membanjiri encoder. */
+static void feed_request(void)
+{
+    g_mutex_lock(&feed.lock);
+    gint64 wait = FEED_GAP_US - (g_get_monotonic_time() - feed.last_push);
+    gboolean now = wait <= 0;
+    if (!now && !feed.pending)
+        feed.pending = g_timeout_add((guint) (wait / 1000) + 1, feed_push_later, NULL);
+    g_mutex_unlock(&feed.lock);
+    if (now)
+        feed_push();
+}
+
+/* Layar bisa diam sama sekali dan kursor tidak bergerak. Frame terakhir tetap
+ * dikirim ulang sesekali supaya pencampur punya sesuatu untuk diulang. */
+static gboolean feed_keepalive(gpointer data)
+{
+    g_mutex_lock(&feed.lock);
+    gboolean stale = feed.src && feed.bg && g_get_monotonic_time() - feed.last_push > 400000;
+    g_mutex_unlock(&feed.lock);
+    if (stale)
+        feed_push();
+    return G_SOURCE_CONTINUE;
+}
+
+/* Datang dari thread PipeWire. */
+static void on_capture(const PwcapUpdate *u, gpointer user)
+{
+    g_mutex_lock(&feed.lock);
+    if (u->pixels && u->width > 0 && u->height > 0 && u->stride > 0) {
+        /* Disalin rapat selebar gambar: stride dari PipeWire bisa berbeda
+         * dengan yang diharapkan pipeline. */
+        int stride = u->width * 4;
+        gsize need = (gsize) stride * u->height;
+        if (need != feed.bg_size) {
+            g_free(feed.bg);
+            feed.bg = g_malloc(need);
+            feed.bg_size = need;
+        }
+        if (u->stride == stride) {
+            memcpy(feed.bg, u->pixels, need);
+        } else {
+            for (int y = 0; y < u->height; y++)
+                memcpy(feed.bg + (gsize) y * stride, u->pixels + (gsize) y * u->stride, stride);
+        }
+        feed.width = u->width;
+        feed.height = u->height;
+        feed.stride = stride;
+    }
+    if (u->cursor && u->cursor_w > 0 && u->cursor_h > 0) {
+        gsize need = (gsize) u->cursor_w * u->cursor_h * 4;
+        g_free(feed.cursor);
+        feed.cursor = g_memdup2(u->cursor, need);
+        feed.cursor_w = u->cursor_w;
+        feed.cursor_h = u->cursor_h;
+    }
+    if (u->cursor_meta) {
+        /* Kursor hilang dari gambar begitu penunjuk pindah ke layar lain. */
+        feed.cursor_valid = u->cursor_valid;
+        if (u->cursor_valid) {
+            feed.x = u->cursor_x;
+            feed.y = u->cursor_y;
+        }
+    }
+    g_mutex_unlock(&feed.lock);
+    feed_request();
+}
+
+static void feed_clear(void)
+{
+    g_mutex_lock(&feed.lock);
+    if (feed.pending) {
+        g_source_remove(feed.pending);
+        feed.pending = 0;
+    }
+    if (feed.keepalive) {
+        g_source_remove(feed.keepalive);
+        feed.keepalive = 0;
+    }
+    Pwcap *cap = feed.cap;
+    feed.cap = NULL;
+    gst_clear_object(&feed.src);
+    g_mutex_unlock(&feed.lock);
+
+    pwcap_close(cap);       /* menunggu thread PipeWire berhenti */
+
+    g_mutex_lock(&feed.lock);
+    g_clear_pointer(&feed.bg, g_free);
+    g_clear_pointer(&feed.cursor, g_free);
+    feed.bg_size = 0;
+    feed.cursor_valid = FALSE;
+    g_mutex_unlock(&feed.lock);
+}
+
 gboolean share_start(App *app, GError **error)
 {
     share_stop(app);
@@ -469,19 +684,20 @@ gboolean share_start(App *app, GError **error)
          * pada laju tetap dan mengulang frame terakhir, seluruhnya di GPU. */
         if (g_str_has_prefix(app->enc_name, "intel"))
             src = g_strdup_printf(
-                "pipewiresrc path=%u do-timestamp=true keepalive-time=500 ! "
-                "video/x-raw,width=%d,height=%d ! identity name=raw silent=true ! "
-                "queue max-size-buffers=1 leaky=downstream ! vapostproc ! "
-                "video/x-raw(memory:VAMemory),format=NV12,width=%d,height=%d ! mix.sink_0 "
+                "appsrc name=feed is-live=true format=time block=false "
+                "max-bytes=0 max-time=0 max-buffers=2 leaky-type=downstream ! "
+                "identity name=raw silent=true ! "
+                "queue max-size-buffers=1 leaky=downstream ! mix.sink_0 "
                 "vacompositor name=mix force-live=true latency=0 ! "
                 "video/x-raw(memory:VAMemory),format=NV12,width=%d,height=%d,framerate=%d/1",
-                virtmon_node(app->virtmon), app->rw, app->rh, app->rw, app->rh,
                 app->rw, app->rh, app->fps);
         else
-            src = g_strdup_printf("pipewiresrc path=%u do-timestamp=true keepalive-time=500 ! "
-                                  "video/x-raw,width=%d,height=%d ! "
-                                  "videorate max-rate=%d ! video/x-raw(ANY)",
-                                  virtmon_node(app->virtmon), app->rw, app->rh, app->fps);
+            src = g_strdup_printf(
+                "appsrc name=feed is-live=true format=time block=false "
+                "max-bytes=0 max-time=0 max-buffers=2 leaky-type=downstream ! "
+                "identity name=raw silent=true ! "
+                "videorate max-rate=%d ! video/x-raw(ANY)",
+                app->fps);
     } else if (app->test_source)
         src = g_strdup_printf("videotestsrc is-live=true pattern=ball ! "
                               "video/x-raw,format=BGRx,width=%d,height=%d,framerate=%d/1",
@@ -528,6 +744,9 @@ gboolean share_start(App *app, GError **error)
     g_free(src);
     g_free(enc);
 
+    if (g_getenv("TSUNAGUPAD_DEBUG"))
+        g_printerr("pipeline: %s\n", desc);
+
     GError *err = NULL;
     GstElement *pipeline = gst_parse_launch(desc, &err);
     g_free(desc);
@@ -543,6 +762,28 @@ gboolean share_start(App *app, GError **error)
     app->pay = gst_bin_get_by_name(GST_BIN(pipeline), "pay");
     app->enc = gst_bin_get_by_name(GST_BIN(pipeline), "enc");
     app->offer_sent = FALSE;
+    if (app->virtmon) {
+        GstElement *feedsrc = gst_bin_get_by_name(GST_BIN(pipeline), "feed");
+        if (feedsrc) {
+            /* Caps lewat properti: appsrc harus bisa bernegosiasi sejak awal. */
+            GstCaps *caps = gst_caps_new_simple("video/x-raw",
+                                                "format", G_TYPE_STRING, "BGRx",
+                                                "width", G_TYPE_INT, app->rw,
+                                                "height", G_TYPE_INT, app->rh,
+                                                "framerate", GST_TYPE_FRACTION, app->fps, 1,
+                                                NULL);
+            g_object_set(feedsrc, "caps", caps, NULL);
+            gst_caps_unref(caps);
+        }
+        g_mutex_lock(&feed.lock);
+        feed.src = feedsrc;         /* kepemilikan pindah ke feed */
+        feed.width = app->rw;
+        feed.height = app->rh;
+        feed.stride = app->rw * 4;
+        feed.fps = app->fps;
+        g_mutex_unlock(&feed.lock);
+
+    }
     playout_delay_attach(app->pay);
 
     Session *s = g_atomic_rc_box_new0(Session);
@@ -609,6 +850,21 @@ gboolean share_start(App *app, GError **error)
         return FALSE;
     }
     if (app->virtmon) {
+        /* Aliran baru dibaca setelah pipeline berjalan: appsrc memberi cap waktu
+         * dari jam pipeline, dan sebelum PLAYING cap waktunya belum berlaku. */
+        GError *cerr = NULL;
+        Pwcap *cap = pwcap_open(virtmon_node(app->virtmon), app->rw, app->rh,
+                                on_capture, NULL, &cerr);
+        if (!cap) {
+            g_propagate_error(error, cerr);
+            share_stop(app);
+            return FALSE;
+        }
+        g_mutex_lock(&feed.lock);
+        feed.cap = cap;
+        feed.keepalive = g_timeout_add(500, feed_keepalive, NULL);
+        g_mutex_unlock(&feed.lock);
+
         /* Monitor virtual baru dibuat Mutter setelah aliran dinegosiasikan,
          * jadi penempatannya dilakukan sesaat setelah pipeline berjalan. */
         g_timeout_add_full(G_PRIORITY_DEFAULT, 400, place_virtual_monitor, session_ref(s),
@@ -638,6 +894,7 @@ void share_stop(App *app)
         session_unref(current);
         current = NULL;
     }
+    feed_clear();
     gst_element_set_state(app->pipeline, GST_STATE_NULL);
     gst_clear_object(&app->enc);
     gst_clear_object(&app->pay);

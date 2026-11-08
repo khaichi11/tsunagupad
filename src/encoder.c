@@ -21,8 +21,8 @@ typedef struct {
 static const Encoder encoders[] = {
     { "nvidia",
       "videoconvertscale n-threads=4 ! video/x-raw,format=NV12,width=%d,height=%d ! "
-      "nvautogpuh264enc name=enc preset=p1 tune=ultra-low-latency rate-control=cbr "
-      "bitrate=%d gop-size=%d vbv-buffer-size=%d b-frames=0 zero-reorder-delay=true",
+      "nvautogpuh264enc name=enc preset=p1 tune=ultra-low-latency rc-mode=cbr "
+      "bitrate=%d gop-size=%d vbv-buffer-size=%d bframes=0 zerolatency=true",
       TRUE },
     { "intel-lp",
       "vapostproc ! video/x-raw(memory:VAMemory),format=NV12,width=%d,height=%d ! "

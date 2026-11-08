@@ -130,11 +130,14 @@ Virtmon *virtmon_open(int width, int height, gboolean hide_cursor, GError **erro
     g_variant_unref(reply);
 
     /* Nilai cursor-mode pada Mutter: 0 sembunyi, 1 ikut digambar, 2 metadata.
-     * Di layar kedua kursor harus terlihat, karena penunjuk bisa saja digerakkan
-     * dari laptop dan iPad tidak punya cara lain untuk tahu posisinya. */
+     *
+     * Dipakai metadata. Kalau kursor ikut digambar, posisinya hanya terbarui
+     * saat ada isi layar yang berubah, jadi kursor terlihat tersendat. Dengan
+     * metadata, Mutter mengirim posisi dan gambar kursor terus-menerus walau
+     * layarnya diam, dan src/pwcap.c menempelkannya sendiri ke setiap frame. */
     g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&b, "{sv}", "cursor-mode",
-                          g_variant_new_uint32(v->hide_cursor ? 0 : 1));
+                          g_variant_new_uint32(v->hide_cursor ? 0 : 2));
     reply = mutter_call(v, MUTTER_SC, v->sc_session, MUTTER_SC ".Session", "RecordVirtual",
                         g_variant_new("(a{sv})", &b), "(o)", error);
     if (!reply) {

@@ -17,7 +17,7 @@ group=$(id -gn "$user")
 packages=(
     build-essential pkg-config
     libglib2.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libsoup-3.0-dev libjson-glib-dev
-    libqrencode-dev libx11-dev libxtst-dev
+    libqrencode-dev libx11-dev libxtst-dev libpipewire-0.3-dev
     gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
     gstreamer1.0-plugins-ugly gstreamer1.0-nice gstreamer1.0-vaapi gstreamer1.0-libav gstreamer1.0-x
     gstreamer1.0-pipewire pipewire xdg-desktop-portal xdg-desktop-portal-gnome

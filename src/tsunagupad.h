@@ -16,6 +16,21 @@ typedef struct _Input Input;
 typedef struct _Client Client;
 typedef struct _Portal Portal;
 typedef struct _Virtmon Virtmon;
+typedef struct _Pwcap Pwcap;
+
+/* Satu pembaruan dari aliran monitor virtual: bisa berisi gambar layar, data
+ * kursor, atau keduanya. Penunjuk di dalamnya hanya berlaku selama callback. */
+typedef struct {
+    const guint8 *pixels;       /* frame layar (BGRx); NULL bila hanya kursor */
+    int width, height, stride;
+    gboolean cursor_meta;       /* buffer ini membawa metadata kursor */
+    gboolean cursor_valid;      /* kursor sedang berada di layar ini */
+    int cursor_x, cursor_y;     /* posisi di layar, sudah dikurangi titik tumpu */
+    const guint8 *cursor;       /* gambar kursor BGRA alpha terkali; NULL bila tak berubah */
+    int cursor_w, cursor_h, cursor_stride;
+} PwcapUpdate;
+
+typedef void (*PwcapCb)(const PwcapUpdate *u, gpointer user);
 
 typedef struct {
     /* opsi dari command line */
@@ -80,6 +95,9 @@ void playout_delay_attach(GstElement *payloader);
 
 /* virtmon.c: layar kedua lewat monitor virtual Mutter, hanya di Wayland */
 gboolean virtmon_available(void);
+Pwcap *pwcap_open(guint32 node, int width, int height, PwcapCb cb, gpointer user, GError **error);
+void pwcap_close(Pwcap *p);
+
 Virtmon *virtmon_open(int width, int height, gboolean hide_cursor, GError **error);
 guint32 virtmon_node(Virtmon *v);
 void virtmon_size(Virtmon *v, int *w, int *h);
