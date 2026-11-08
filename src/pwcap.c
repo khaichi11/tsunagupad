@@ -33,6 +33,7 @@ struct _Pwcap {
     int want_w, want_h;
     guint8 *cur;            /* gambar kursor yang sudah diseragamkan jadi BGRA */
     gsize cur_cap;
+    int hot_x, hot_y;       /* titik tumpu gambar kursor yang berlaku sekarang */
     PwcapCb cb;
     gpointer user;
 };
@@ -170,13 +171,19 @@ static void on_process(void *data)
     u.cursor_meta = mc != NULL;
     if (mc && spa_meta_cursor_is_valid(mc)) {
         u.cursor_valid = TRUE;
-        u.cursor_x = mc->position.x - mc->hotspot.x;
-        u.cursor_y = mc->position.y - mc->hotspot.y;
+        /* Titik tumpu hanya ikut dikirim bersama gambar kursornya. Pembaruan
+         * posisi biasa datang tanpa itu, jadi nilai terakhir yang dipakai;
+         * kalau tidak, gambar kursor melenceng sejauh titik tumpunya. */
         if (mc->bitmap_offset) {
             struct spa_meta_bitmap *bm = SPA_PTROFF(mc, mc->bitmap_offset, struct spa_meta_bitmap);
-            if (bm->size.width > 0 && bm->size.height > 0)
+            if (bm->size.width > 0 && bm->size.height > 0) {
                 convert_bitmap(p, bm, &u);
+                p->hot_x = mc->hotspot.x;
+                p->hot_y = mc->hotspot.y;
+            }
         }
+        u.cursor_x = mc->position.x - p->hot_x;
+        u.cursor_y = mc->position.y - p->hot_y;
     }
 
     if (g_getenv("TSUNAGUPAD_DEBUG")) {
@@ -190,8 +197,9 @@ static void on_process(void *data)
         if (!t0)
             t0 = now;
         if (now - t0 > 2000000) {
-            g_printerr("pwcap: %d frame layar, %d kabar kursor dalam %.1f s\n", frames, cursors,
-                       (now - t0) / 1e6);
+            g_printerr("pwcap: %d frame layar, %d kabar kursor dalam %.1f s "
+                       "(kursor di %d,%d titik tumpu %d,%d)\n", frames, cursors,
+                       (now - t0) / 1e6, u.cursor_x, u.cursor_y, p->hot_x, p->hot_y);
             frames = cursors = 0;
             t0 = now;
         }

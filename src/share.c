@@ -589,11 +589,13 @@ static void feed_request(void)
 }
 
 /* Layar bisa diam sama sekali dan kursor tidak bergerak. Frame terakhir tetap
- * dikirim ulang sesekali supaya pencampur punya sesuatu untuk diulang. */
+ * dikirim ulang sepuluh kali sedetik: selain menjaga aliran tetap hidup, encoder
+ * jadi terus memperhalus gambar diam itu sehingga tidak tertinggal buram setelah
+ * keyframe. */
 static gboolean feed_keepalive(gpointer data)
 {
     g_mutex_lock(&feed.lock);
-    gboolean stale = feed.src && feed.bg && g_get_monotonic_time() - feed.last_push > 400000;
+    gboolean stale = feed.src && feed.bg && g_get_monotonic_time() - feed.last_push > 90000;
     g_mutex_unlock(&feed.lock);
     if (stale)
         feed_push();
@@ -862,7 +864,7 @@ gboolean share_start(App *app, GError **error)
         }
         g_mutex_lock(&feed.lock);
         feed.cap = cap;
-        feed.keepalive = g_timeout_add(500, feed_keepalive, NULL);
+        feed.keepalive = g_timeout_add(100, feed_keepalive, NULL);
         g_mutex_unlock(&feed.lock);
 
         /* Monitor virtual baru dibuat Mutter setelah aliran dinegosiasikan,

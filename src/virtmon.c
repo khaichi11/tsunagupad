@@ -25,6 +25,7 @@ struct _Virtmon {
     char *stream;           /* jalur stream, dipakai sebagai acuan koordinat */
     guint32 node;
     int width, height;
+    double scale;           /* skala monitor virtual di tata letak */
     gboolean hide_cursor;
 };
 
@@ -229,6 +230,8 @@ void virtmon_key(Virtmon *v, int keycode, gboolean press)
 typedef struct {
     char *mode;
     int width, height;
+    double *scales;         /* faktor skala yang didukung mode ini */
+    int n_scales;
 } ModeInfo;
 
 static void free_mode(gpointer data);
@@ -257,6 +260,12 @@ static GHashTable *current_modes(GVariant *monitors, char **virtual_connector)
                 info->mode = g_strdup(id);
                 info->width = w;
                 info->height = h;
+                gsize n = 0;
+                const gdouble *list = g_variant_get_fixed_array(scales, &n, sizeof(gdouble));
+                if (list && n) {
+                    info->scales = g_memdup2(list, n * sizeof(gdouble));
+                    info->n_scales = (int) n;
+                }
                 g_hash_table_insert(modes, g_strdup(connector), info);
             }
             g_clear_pointer(&id, g_free);
@@ -278,6 +287,7 @@ static void free_mode(gpointer data)
 {
     ModeInfo *info = data;
     g_free(info->mode);
+    g_free(info->scales);
     g_free(info);
 }
 
@@ -310,10 +320,46 @@ gboolean virtmon_place(Virtmon *v, GError **error)
             continue;   /* monitor baru ada setelah aliran dinegosiasikan */
         }
 
+        /* Skala monitor utama dicari dulu: skala monitor virtual harus sama,
+         * kalau tidak GNOME mengubah cara XWayland menggambar dan aplikasi X11
+         * di monitor lain ikut berubah ukurannya. */
+        gdouble main_scale = 1.0;
+        {
+            GVariantIter first;
+            gint32 fx = 0, fy = 0;
+            gdouble fscale = 1.0;
+            guint32 ftransform = 0;
+            gboolean fprimary = FALSE;
+            GVariant *fmembers = NULL, *fprops = NULL;
+            g_variant_iter_init(&first, logical);
+            while (g_variant_iter_next(&first, "(iidub@a(ssss)@a{sv})", &fx, &fy, &fscale,
+                                       &ftransform, &fprimary, &fmembers, &fprops)) {
+                if (fprimary && fscale > 0)
+                    main_scale = fscale;
+                g_clear_pointer(&fmembers, g_variant_unref);
+                g_clear_pointer(&fprops, g_variant_unref);
+            }
+        }
+
+        /* Skala yang paling mendekati, dari yang didukung mode monitor virtual. */
+        gdouble want_scale = 1.0;
+        {
+            ModeInfo *vinfo = g_hash_table_lookup(modes, virt);
+            gdouble best = -1;
+            for (int i = 0; vinfo && i < vinfo->n_scales; i++) {
+                gdouble d = ABS(vinfo->scales[i] - main_scale);
+                if (best < 0 || d < best) {
+                    best = d;
+                    want_scale = vinfo->scales[i];
+                }
+            }
+        }
+        v->scale = want_scale;
+
         GVariantBuilder out;
         g_variant_builder_init(&out, G_VARIANT_TYPE("a(iiduba(ssa{sv}))"));
         int right = 0;
-        gboolean placed = FALSE;
+        gboolean placed = FALSE, rescaled = FALSE;
         GVariantIter liter;
         gint32 lx = 0, ly = 0;
         gdouble scale = 1.0;
@@ -328,13 +374,16 @@ gboolean virtmon_place(Virtmon *v, GError **error)
             GVariantIter it;
             GVariant *member = NULL;
             int width = 0;
+            gboolean is_virtual = FALSE;
             g_variant_iter_init(&it, members);
             while (g_variant_iter_next(&it, "@(ssss)", &member)) {
                 char *connector = NULL;
                 g_variant_get_child(member, 0, "s", &connector);
                 ModeInfo *info = g_hash_table_lookup(modes, connector);
-                if (g_strcmp0(connector, virt) == 0)
+                if (g_strcmp0(connector, virt) == 0) {
                     placed = TRUE;
+                    is_virtual = TRUE;
+                }
                 if (info && !width)
                     width = info->width;
                 GVariantBuilder empty;
@@ -343,6 +392,13 @@ gboolean virtmon_place(Virtmon *v, GError **error)
                                       info ? info->mode : "", &empty);
                 g_free(connector);
                 g_variant_unref(member);
+            }
+            /* Susunan tersimpan dari GNOME bisa saja memberi monitor virtual
+             * skala yang berbeda; itu dibetulkan di sini tanpa mengubah
+             * monitor lain. */
+            if (is_virtual && ABS(scale - want_scale) > 0.001) {
+                scale = want_scale;
+                rescaled = TRUE;
             }
             g_variant_builder_add(&out, "(iiduba(ssa{sv}))", lx, ly, scale, transform,
                                   primary, &mon);
@@ -353,15 +409,7 @@ gboolean virtmon_place(Virtmon *v, GError **error)
         }
 
         gboolean ok = TRUE;
-        if (!placed) {
-            /* Monitor virtual ditaruh di sebelah kanan layar paling kanan. */
-            ModeInfo *info = g_hash_table_lookup(modes, virt);
-            GVariantBuilder mon, empty;
-            g_variant_builder_init(&mon, G_VARIANT_TYPE("a(ssa{sv})"));
-            g_variant_builder_init(&empty, G_VARIANT_TYPE_VARDICT);
-            g_variant_builder_add(&mon, "(ssa{sv})", virt, info ? info->mode : "", &empty);
-            g_variant_builder_add(&out, "(iiduba(ssa{sv}))", right, 0, 1.0, 0u, FALSE, &mon);
-
+        if (placed && rescaled) {
             GVariant *reply = g_dbus_connection_call_sync(
                 v->bus, "org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",
                 "org.gnome.Mutter.DisplayConfig", "ApplyMonitorsConfig",
@@ -369,9 +417,36 @@ gboolean virtmon_place(Virtmon *v, GError **error)
                 NULL, G_DBUS_CALL_FLAGS_NONE, 5000, NULL, error);
             ok = reply != NULL;
             g_clear_pointer(&reply, g_variant_unref);
+        } else if (!placed) {
+            /* Monitor virtual ditaruh di sebelah kanan layar paling kanan. */
+            ModeInfo *info = g_hash_table_lookup(modes, virt);
+            GVariantBuilder mon, empty;
+            g_variant_builder_init(&mon, G_VARIANT_TYPE("a(ssa{sv})"));
+            g_variant_builder_init(&empty, G_VARIANT_TYPE_VARDICT);
+            g_variant_builder_add(&mon, "(ssa{sv})", virt, info ? info->mode : "", &empty);
+
+            g_variant_builder_add(&out, "(iiduba(ssa{sv}))", right, 0, want_scale, 0u, FALSE,
+                                  &mon);
+
+            GVariant *reply = g_dbus_connection_call_sync(
+                v->bus, "org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",
+                "org.gnome.Mutter.DisplayConfig", "ApplyMonitorsConfig",
+                /* 1 = sementara, tidak ditulis ke monitors.xml.
+                 *
+                 * Menyimpannya sendiri justru berbahaya: setiap kali jumlah
+                 * monitor berubah, GNOME mencari konfigurasi tersimpan yang
+                 * cocok, dan satu entri lama yang buruk bisa menarik resolusi
+                 * serta skala layar lain ikut berubah. Kalau pengguna menggeser
+                 * monitor iPad lewat Pengaturan, Pengaturan sendiri yang
+                 * menyimpannya, dan sesi berikutnya tinggal memakainya. */
+                g_variant_new("(uua(iiduba(ssa{sv}))a{sv})", serial, 1u, &out, NULL),
+                NULL, G_DBUS_CALL_FLAGS_NONE, 5000, NULL, error);
+            ok = reply != NULL;
+            g_clear_pointer(&reply, g_variant_unref);
         } else {
             g_variant_builder_clear(&out);
         }
+
 
         g_hash_table_destroy(modes);
         g_free(virt);
