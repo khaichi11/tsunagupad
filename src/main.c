@@ -313,7 +313,7 @@ static int cmd_share(int argc, char **argv)
 {
     App app = { 0 };
     int port = 8765;
-    char *region = NULL, *second = NULL, *cursor = NULL, *web_dir = NULL;
+    char *region = NULL, *second = NULL, *cursor = NULL, *web_dir = NULL, *scale = NULL;
     gboolean no_input = FALSE, reset_token = FALSE;
     app.quality = "lancar";
     app.encoder = "auto";
@@ -324,6 +324,7 @@ static int cmd_share(int argc, char **argv)
         { "port", 'p', 0, G_OPTION_ARG_INT, &port, "Port HTTP (bawaan 8765)", "PORT" },
         { "region", 'r', 0, G_OPTION_ARG_STRING, &region, "Area layar yang dibagikan", "X,Y,W,H" },
         { "cursor", 0, 0, G_OPTION_ARG_STRING, &cursor, "Kursor layar kedua: sistem (bawaan) | lokal", "MODE" },
+        { "scale", 0, 0, G_OPTION_ARG_STRING, &scale, "Skala layar kedua: 1 (bawaan), 1.25, 1.5, 2, atau ikut", "S" },
         { "second", 0, 0, G_OPTION_ARG_STRING, &second, "iPad jadi layar kedua, mis. 1280x800 (Wayland)", "WxH" },
         { "quality", 'q', 0, G_OPTION_ARG_STRING, &app.quality, "hemat | lancar | seimbang | tajam", "Q" },
         { "encoder", 'e', 0, G_OPTION_ARG_STRING, &app.encoder, "auto | nvidia | intel-lp | intel | cpu", "ENC" },
@@ -359,6 +360,14 @@ static int cmd_share(int argc, char **argv)
         (g_str_equal(app.backend, "auto") && !app.test_source && !region &&
          g_strcmp0(g_getenv("XDG_SESSION_TYPE"), "wayland") == 0);
 
+    /* Layar kedua memakai monitor virtual kompositor Wayland. Di Xorg jalur itu
+     * tidak ada; dulu opsinya diam-diam diabaikan dan pengguna mengira layar
+     * keduanya gagal, jadi sekarang ditolak dengan jelas. */
+    if (second && !use_portal)
+        return fail("Layar kedua hanya ada di sesi Wayland. Sesi ini Xorg: keluar dan "
+                    "masuk lagi memilih Ubuntu on Wayland, atau jalankan tanpa --second "
+                    "untuk membagikan layar yang ada.");
+
     /* Encoder dicek dulu supaya jendela izin GNOME tidak muncul bila ternyata tidak bisa jalan. */
     stop_stale(match_share, NULL);
     app.enc_name = encoder_pick(app.encoder);
@@ -383,8 +392,21 @@ static int cmd_share(int argc, char **argv)
             /* Kursor asli dari laptop ikut ditampilkan. Mutter mengirim posisi
              * dan gambarnya lewat metadata, lalu ditempel ke tiap frame. Mode
              * "lokal" mematikannya dan iPad menggambar penunjuknya sendiri. */
+            /* Skala menentukan luas ruang kerja di iPad: pada skala 1 ukuran
+             * yang diminta itu juga ukuran desktopnya, pada skala 1,5 ruangnya
+             * dua pertiga tetapi tulisannya lebih besar. "ikut" menyamakan
+             * dengan monitor utama. */
+            double vscale = 1.0;
+            if (scale && g_str_equal(scale, "ikut"))
+                vscale = 0;
+            else if (scale) {
+                char *endp = NULL;
+                vscale = g_ascii_strtod(scale, &endp);
+                if (endp == scale || vscale < 0.5 || vscale > 4)
+                    return fail("Nilai --scale harus antara 0.5 dan 4, atau kata ikut");
+            }
             app.virtmon = virtmon_open(vw & ~1, vh & ~1,
-                                       g_strcmp0(cursor, "lokal") == 0, &verr);
+                                       g_strcmp0(cursor, "lokal") == 0, vscale, &verr);
             if (!app.virtmon)
                 return fail(verr ? verr->message : "Monitor virtual gagal dibuat");
             virtmon_size(app.virtmon, &app.rw, &app.rh);

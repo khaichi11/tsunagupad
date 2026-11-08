@@ -15,12 +15,18 @@ Layar Ubuntu tampil di iPad, dan sentuhan, Apple Pencil, mouse, serta keyboard
 dari iPad mengendalikan Ubuntu. Menggambar di iPad langsung masuk ke aplikasi
 yang berjalan di Ubuntu.
 
+![iPad dipakai sebagai layar kedua](docs/media/demo-second-id.gif)
+
+Di Wayland, iPad bisa jadi layar kedua, bukan salinan layar pertama: satu
+monitor tanpa kabel, jendela bisa diseret ke sana, dan penunjuk menyeberang
+seperti di layar biasa.
+
 ![Layar iPad tampil di Ubuntu lewat AirPlay](docs/media/demo-airplay-id.gif)
 
 Arah sebaliknya: layar iPad tampil di Ubuntu lewat AirPlay, memakai tombol
 Pencerminan Layar yang memang sudah ada di iPadOS.
 
-Kedua animasi digambar oleh [docs/make_demo.py](docs/make_demo.py), bukan
+Animasinya digambar oleh [docs/make_demo.py](docs/make_demo.py), bukan
 rekaman layar sungguhan, jadi tidak ada isi layar pribadi yang ikut
 dipublikasikan. Jalankan `python3 docs/make_demo.py` untuk membuatnya ulang.
 
@@ -122,6 +128,30 @@ jari untuk klik kanan, geser dua jari untuk menggulir. Apple Pencil menggambar
 dengan tekanan, yang bekerja di aplikasi seperti Xournal++ dan Krita. Menu kecil
 di bagian atas layar berisi keyboard, mode sentuh, pilihan bahasa, dan informasi
 sambungan.
+
+### Pakai iPad sebagai layar kedua
+
+Hanya di Wayland. Layarnya datang dari monitor virtual kompositor, dan Xorg
+tidak punya itu, jadi di sesi Xorg perintahnya berhenti dengan pesan, bukan
+jalan setengah-setengah; panelnya pun menyembunyikan sakelar itu di sana. Kalau
+sedang di Xorg, keluar lalu masuk lagi dan pilih Ubuntu on Wayland, atau
+bagikan saja layar yang sudah ada.
+
+```bash
+tsunagupad share --second 1280x800
+```
+
+GNOME mendapat satu monitor tambahan yang tidak tercolok kabel apa pun. Jendela
+bisa diseret ke sana, dan penunjuk dari laptop ikut menyeberang lalu digambar ke
+dalam videonya, jadi rasanya seperti layar biasa. Atur sekali posisinya di
+Pengaturan, Tampilan, dan GNOME mengingat letaknya.
+
+Ukuran yang diminta itulah luas desktop yang didapat iPad. `--scale` mengatur
+besar tampilannya: bawaannya `1`, jadi layar 1280x800 benar-benar seluas 1280
+kali 800 titik; `1.5` membuat tulisan lebih besar dengan ruang dua pertiganya;
+`ikut` menyamakan dengan skala monitor utama. Kalau ada aplikasi yang tidak mau
+muat, beri layar yang lebih luas (`--second 1640x1024`), bukan skala yang lebih
+besar.
 
 ### Tampilkan layar iPad
 

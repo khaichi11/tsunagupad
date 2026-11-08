@@ -78,13 +78,14 @@ char *encoder_fragment(const char *name, int w, int h, int fps, int kbps, int ma
      * (PLI), jadi keyframe berkala hanya membuang bit: tiap keyframe memakan
      * jatah bitrate satu detik berikutnya, gambarnya jadi buram sebentar lalu
      * jernih lagi, berulang terus. Sekarang keyframe hanya dikirim sepuluh
-     * detik sekali atau saat iPad memintanya.
+     * tiga detik sekali atau saat iPad memintanya; cukup jarang supaya tidak
+     * berdenyut, tetapi kalau ada paket hilang gambarnya tidak lama rusak.
      *
      * Penyangga bitrate (CPB/VBV) diberi sekitar sepertiga detik, bukan satu
      * frame. Dengan satu frame, frame yang ramai langsung dipaksa kasar; dengan
      * sepertiga detik encoder boleh meminjam bit sebentar dan kualitasnya jauh
      * lebih rata, tanpa menambah jeda yang terasa. */
-    int gop = fps * 10;
+    int gop = fps * 3;
     int vbv = MAX(MAX(kbps, max_kbps) / 3, 500);
     return g_strdup_printf(e->fmt, w, h, kbps * encoder_bitrate_unit(name), gop, vbv);
 }

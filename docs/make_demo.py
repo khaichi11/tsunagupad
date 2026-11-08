@@ -4,19 +4,26 @@
 Semua gambar digambar dari nol, bukan rekaman layar, jadi tidak ada isi layar
 pribadi yang ikut terbawa ke repository. Jalankan dari akar proyek:
 
-    python3 docs/make_demo.py
+    python3 docs/make_demo.py            # semuanya
+    python3 docs/make_demo.py share      # satu adegan saja
 
-Hasil di docs/media: demo-share.gif, demo-share-id.gif, demo-airplay.gif,
-demo-airplay-id.gif
+Hasil di docs/media: demo-share.gif, demo-second.gif, demo-airplay.gif, dan
+versi berbahasa Indonesia dengan akhiran -id.
 
-Butuh python3-pil dan ffmpeg. Judul memakai Poppins dan teks memakai Inter bila
-tersedia; keduanya berlisensi SIL Open Font License dan tidak disalin ke
-repository ini. Ambil sekali dengan:
+Gayanya minimalis seperti iklan produk: latar gelap bergaris tipis, bentuk
+bergaris halus, satu warna aksen. Tidak ada yang memantul; semuanya masuk
+dengan percepatan lalu perlambatan dan disingkap lewat topeng yang bergerak.
+Tiap frame dirender beberapa kali lalu dirata-ratakan supaya ada jejak geraknya,
+dan semuanya digambar dua kali lipat lalu dikecilkan agar tepinya halus.
+
+Butuh python3-pil dan ffmpeg. Teks memakai Poppins bila tersedia; fontnya
+berlisensi SIL Open Font License dan tidak disalin ke repository ini. Ambil
+sekali dengan:
 
     mkdir -p ~/.cache/tsunagupad-fonts && cd ~/.cache/tsunagupad-fonts
     curl -fsSLO https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-SemiBold.ttf
     curl -fsSLO https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-Medium.ttf
-    sudo apt install fonts-inter
+    curl -fsSLO https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-Regular.ttf
 
 SPDX-License-Identifier: MIT
 """
@@ -25,22 +32,28 @@ import math
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-W, H = 880, 495
-FPS = 20
+OUT_W, OUT_H = 880, 495
+SS = 2                      # digambar sebesar ini, lalu dikecilkan
+W, H = OUT_W * SS, OUT_H * SS
+FPS = 25
+SUB = 2                     # cuplikan per frame, dirata-ratakan jadi jejak gerak
 
-INK = (9, 12, 18)
-INK_SOFT = (16, 21, 30)
-PANEL = (23, 30, 41)
-BEZEL = (13, 17, 24)
-EDGE = (44, 55, 71)
-TEXT = (232, 237, 244)
-MUTED = (143, 158, 177)
-ACCENT = (110, 231, 200)
-MARK = (240, 118, 118)
+BG = (14, 17, 22)           # latar gelap
+RULE = (22, 26, 33)         # garis latar
+PANEL = (18, 22, 29)        # badan perangkat dan kartu
+HAIR = (58, 68, 83)         # garis bentuk
+INK = (233, 237, 244)       # teks utama, pena, penunjuk
+GREY = (138, 149, 166)      # teks pendamping
+GLASS = (28, 35, 48)        # isi layar perangkat
+TINT = (40, 49, 63)         # isi bentuk di dalam layar
+ACCENT = (167, 139, 250)   # ungu terang
+
+STROKE = 1.6                # tebal garis dalam satuan tayang
 
 FONT_DIRS = [pathlib.Path.home() / ".cache/tsunagupad-fonts",
              pathlib.Path("/usr/share/fonts/truetype")]
@@ -55,406 +68,546 @@ def find_font(*names):
     return FALLBACK
 
 
-DISPLAY = find_font("Poppins-SemiBold.ttf")
-DISPLAY_MED = find_font("Poppins-Medium.ttf", "Poppins-SemiBold.ttf")
-BODY = find_font("InterDisplay-Regular.ttf", "Inter-Regular.ttf", "Inter[opsz,wght].ttf")
-BODY_MED = find_font("InterDisplay-Medium.ttf", "Inter-Medium.ttf", "Inter[opsz,wght].ttf")
+SEMI = find_font("Poppins-SemiBold.ttf", "Poppins-Medium.ttf")
+MED = find_font("Poppins-Medium.ttf", "Poppins-Regular.ttf", "Inter-Medium.ttf")
+REG = find_font("Poppins-Regular.ttf", "Inter-Regular.ttf", "Poppins-Medium.ttf")
 
-_font_cache = {}
+_fonts = {}
 
 
 def font(path, size):
-    key = (path, size)
-    if key not in _font_cache:
+    key = (path, int(size * SS))
+    if key not in _fonts:
         try:
-            _font_cache[key] = ImageFont.truetype(path, size)
+            _fonts[key] = ImageFont.truetype(path, int(size * SS))
         except OSError:
-            _font_cache[key] = ImageFont.load_default()
-    return _font_cache[key]
+            _fonts[key] = ImageFont.load_default()
+    return _fonts[key]
 
 
-def text(d, s, xy, size=15, color=TEXT, path=None, center=False):
-    f = font(path or BODY, size)
-    x, y = xy
-    if center:
-        x -= d.textlength(s, font=f) / 2
-    d.text((x, y), s, font=f, fill=color)
+# ---------- waktu dan percepatan ----------
+
+def clamp(v, lo=0.0, hi=1.0):
+    return lo if v < lo else hi if v > hi else v
+
+
+def span(t, start, end):
+    return clamp((t - start) / max(1e-6, end - start))
 
 
 def ease(t):
-    t = max(0.0, min(1.0, t))
+    """Percepatan lalu perlambatan; dipakai hampir di semua gerakan."""
+    t = clamp(t)
+    return 4 * t ** 3 if t < 0.5 else 1 - (-2 * t + 2) ** 3 / 2
+
+
+def ease_soft(t):
+    t = clamp(t)
     return t * t * (3 - 2 * t)
 
 
-def backdrop():
-    """Latar gelap dengan pendar lembut dan garis kisi tipis."""
-    img = Image.new("RGB", (W, H), INK)
-    d = ImageDraw.Draw(img)
-    for y in range(H):
-        k = y / H
-        d.line([(0, y), (W, y)], fill=(
-            int(INK[0] + (INK_SOFT[0] - INK[0]) * k),
-            int(INK[1] + (INK_SOFT[1] - INK[1]) * k),
-            int(INK[2] + (INK_SOFT[2] - INK[2]) * k)))
-    grid = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    g = ImageDraw.Draw(grid)
-    for x in range(0, W, 44):
-        g.line([(x, 0), (x, H)], fill=(255, 255, 255, 7))
-    for y in range(0, H, 44):
-        g.line([(0, y), (W, y)], fill=(255, 255, 255, 7))
-    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse([W * 0.26, -170, W * 0.78, 250], fill=ACCENT + (26,))
-    glow = glow.filter(ImageFilter.GaussianBlur(90))
-    return Image.alpha_composite(Image.alpha_composite(img.convert("RGBA"), glow), grid)
+def out_quint(t):
+    t = clamp(t)
+    return 1 - (1 - t) ** 5
 
 
-def shadow(img, box, radius, blur=22, alpha=130, drop=14):
-    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+def mix(a, b, k):
+    return a + (b - a) * k
+
+
+def mixp(a, b, k):
+    return (mix(a[0], b[0], k), mix(a[1], b[1], k))
+
+
+# ---------- kuas dasar ----------
+
+def px(*v):
+    return tuple(int(round(x * SS)) for x in v)
+
+
+def layer():
+    return Image.new("RGBA", (W, H), (0, 0, 0, 0))
+
+
+def over(img, lay):
+    return Image.alpha_composite(img, lay)
+
+
+def rr(d, box, radius, fill=None, line_color=HAIR, width=STROKE, alpha=255):
+    d.rounded_rectangle(px(*box), radius * SS,
+                        fill=(tuple(fill) + (alpha,)) if fill else None,
+                        outline=(tuple(line_color) + (alpha,)) if line_color else None,
+                        width=max(1, int(width * SS)) if line_color else 0)
+
+
+def circle(d, x, y, r, fill=None, line_color=HAIR, width=STROKE, alpha=255):
+    d.ellipse(px(x - r, y - r, x + r, y + r),
+              fill=(tuple(fill) + (alpha,)) if fill else None,
+              outline=(tuple(line_color) + (alpha,)) if line_color else None,
+              width=max(1, int(width * SS)) if line_color else 0)
+
+
+def seg(d, a, b, color=HAIR, width=STROKE, alpha=255):
+    d.line(px(a[0], a[1], b[0], b[1]), fill=tuple(color) + (alpha,),
+           width=max(1, int(width * SS)))
+
+
+def text(d, s, xy, size=14, color=INK, path=None, center=False, alpha=255, track=0.0):
+    """Teks biasa; track merenggangkan huruf sedikit untuk judul."""
+    f = font(path or REG, size)
+    x, y = px(*xy)
+    if track <= 0:
+        if center:
+            x -= d.textlength(s, font=f) / 2
+        d.text((x, y), s, font=f, fill=tuple(color) + (int(alpha),))
+        return
+    gap = track * SS
+    total = sum(d.textlength(c, font=f) + gap for c in s) - gap
+    if center:
+        x -= total / 2
+    for c in s:
+        d.text((x, y), c, font=f, fill=tuple(color) + (int(alpha),))
+        x += d.textlength(c, font=f) + gap
+
+
+def text_w(d, s, size, path=None):
+    return d.textlength(s, font=font(path or REG, size)) / SS
+
+
+def reveal(lay, box, k, feather=3):
+    """Menyingkap isi layer dari bawah ke atas di dalam kotak."""
+    if k >= 1:
+        return lay
+    if k <= 0:
+        return layer()
     x0, y0, x1, y1 = box
-    ImageDraw.Draw(layer).rounded_rectangle([x0, y0 + drop, x1, y1 + drop], radius,
-                                            fill=(0, 0, 0, alpha))
-    return Image.alpha_composite(img, layer.filter(ImageFilter.GaussianBlur(blur)))
+    m = Image.new("L", (W, H), 0)
+    md = ImageDraw.Draw(m)
+    cut = mix(y1, y0, k)
+    md.rectangle(px(x0 - 60, cut, x1 + 60, y1 + 80), fill=255)
+    if feather:
+        m = m.filter(ImageFilter.GaussianBlur(feather * SS))
+    out = lay.copy()
+    out.putalpha(Image.composite(out.getchannel("A"), Image.new("L", (W, H), 0), m))
+    return out
 
 
-def gradient_screen(d, box, top, bottom):
-    x0, y0, x1, y1 = box
-    span = max(1, int(y1 - y0))
-    for i in range(span):
-        k = i / span
-        d.line([(x0, y0 + i), (x1, y0 + i)], fill=(
-            int(top[0] + (bottom[0] - top[0]) * k),
-            int(top[1] + (bottom[1] - top[1]) * k),
-            int(top[2] + (bottom[2] - top[2]) * k)))
+# ---------- panggung ----------
 
-
-def laptop(img, x, y, w, h):
-    img = shadow(img, (x, y, x + w, y + h), 16)
+def stage(t):
+    """Gelap dengan garis tegak tipis dan satu garis alas. Latarnya diam supaya
+    yang bergerak hanya bendanya, dan supaya GIF-nya tetap kecil."""
+    img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([x, y, x + w, y + h], 16, fill=BEZEL, outline=EDGE, width=2)
-    screen = (x + 12, y + 12, x + w - 12, y + h - 18)
-    gradient_screen(d, screen, (26, 34, 46), (17, 23, 32))
-    d.rounded_rectangle([x - 26, y + h + 6, x + w + 26, y + h + 18], 6,
-                        fill=PANEL, outline=EDGE, width=2)
-    d.line([x + w / 2 - 26, y + h + 12, x + w / 2 + 26, y + h + 12], fill=EDGE, width=3)
-    return img, screen
+    step = 40
+    for i in range(1, OUT_W // step + 1):
+        d.line(px(i * step, 0, i * step, OUT_H), fill=RULE, width=max(1, int(SS)))
+    d.line(px(0, 436, OUT_W, 436), fill=(25, 29, 37), width=max(1, int(SS)))
+    return img.convert("RGBA")
 
 
-def tablet(img, x, y, w, h):
-    img = shadow(img, (x, y, x + w, y + h), 22)
-    d = ImageDraw.Draw(img)
-    d.rounded_rectangle([x, y, x + w, y + h], 22, fill=BEZEL, outline=EDGE, width=2)
-    screen = (x + 11, y + 11, x + w - 11, y + h - 11)
-    gradient_screen(d, screen, (26, 34, 46), (17, 23, 32))
-    d.rounded_rectangle([x + w / 2 - 26, y + h - 7, x + w / 2 + 26, y + h - 5], 2, fill=EDGE)
-    return img, screen
+# ---------- isi layar ----------
 
-
-def stairs(d, box):
-    """Contoh foto tangga, bahan yang dilabeli."""
+def picture(img, box, k=1.0, framed=False, alpha=255):
+    """Isi layar: foto tangga yang sedang dilabeli, digambar dengan garis saja."""
+    if k <= 0.02:
+        return img
+    if framed:
+        sh = layer()
+        ImageDraw.Draw(sh).rounded_rectangle(px(box[0], box[1] + 7, box[2], box[3] + 7),
+                                             5 * SS, fill=(0, 0, 0, 120))
+        img = over(img, sh.filter(ImageFilter.GaussianBlur(5 * SS)))
+    lay = layer()
+    d = ImageDraw.Draw(lay)
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
-    d.rectangle(box, fill=(31, 40, 52))
-    d.polygon([(x0, y0 + h * 0.18), (x1, y0 + h * 0.02), (x1, y0), (x0, y0)], fill=(38, 49, 63))
-    steps = 5
+    a = int(alpha * clamp(k))
+    rr(d, box, 5, GLASS, HAIR if framed else None, STROKE, a)
+    seg(d, (x0 + w * 0.08, y0 + h * 0.72), (x1 - w * 0.08, y0 + h * 0.72), TINT, 1.2, a)
+    steps = 4
     for i in range(steps):
-        k = i / steps
-        sw = w * (0.78 - k * 0.1)
-        sh = h * 0.58 / steps
-        top = y1 - h * 0.14 - (i + 1) * sh
-        left = x0 + w * 0.11 + k * w * 0.03
-        d.rectangle([left, top, left + sw, top + sh * 0.88], fill=(56 + i * 5, 68 + i * 5, 83 + i * 5))
-        d.line([left, top, left + sw, top], fill=(96, 112, 131), width=1)
+        sw = w * (0.48 - i * 0.03)
+        sh = h * 0.1
+        left = x0 + w * 0.18 + i * w * 0.02
+        top = y1 - h * 0.13 - (i + 1) * sh
+        rr(d, (left, top, left + sw, top + sh), 2, TINT, HAIR, 1.2, a)
+    circle(d, x1 - w * 0.17, y0 + h * 0.23, min(w, h) * 0.07, None, HAIR, 1.2, a)
+    return over(img, lay)
 
 
-def polygon_layer(box, points, count, pop):
-    """Poligon label dengan pendar lembut."""
-    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
+def window_card(d, box, alpha=255, lines=3, accent=False):
     x0, y0, x1, y1 = box
-    pts = [(x0 + px * (x1 - x0), y0 + py * (y1 - y0)) for px, py in points[:count]]
-    if len(pts) > 2:
-        d.polygon(pts, fill=MARK + (38,))
-    if len(pts) > 1:
-        d.line(pts + ([pts[0]] if count == len(points) else []), fill=MARK + (235,), width=3,
-               joint="curve")
-    for i, p in enumerate(pts):
-        r = 5 if i < count - 1 else 5 + 4 * (1 - ease(pop))
-        d.ellipse([p[0] - r, p[1] - r, p[0] + r, p[1] + r], fill=(252, 236, 236, 255),
-                  outline=MARK + (255,), width=2)
-    return layer
+    col = ACCENT if accent else HAIR
+    rr(d, box, 5, PANEL, col, STROKE, alpha)
+    seg(d, (x0, y0 + 15), (x1, y0 + 15), col, 1.2, alpha)
+    for i in range(3):
+        circle(d, x0 + 10 + i * 8, y0 + 7.5, 2.1, None, col, 1.2, alpha)
+    for i in range(lines):
+        wdt = (x1 - x0 - 24) * (0.9 - i * 0.22)
+        yy = y0 + 26 + i * 11
+        if yy > y1 - 8:
+            break
+        rr(d, (x0 + 12, yy, x0 + 12 + wdt, yy + 4), 2, TINT, None, 0, alpha)
 
 
-def pen_cursor(layer, x, y, pressed):
-    d = ImageDraw.Draw(layer)
-    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse([x - 26, y - 26, x + 26, y + 26], fill=ACCENT + (70 if pressed else 40,))
-    layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(12)))
-    r = 11 if pressed else 13
-    d.ellipse([x - r, y - r, x + r, y + r], outline=ACCENT + (255,), width=2)
-    d.ellipse([x - 3, y - 3, x + 3, y + 3], fill=ACCENT + (255,))
+# ---------- perangkat ----------
+
+def laptop_art(x, y, w, h):
+    """Laptop sebagai layer tersendiri, supaya bisa disingkap dengan topeng."""
+    lay = layer()
+    d = ImageDraw.Draw(lay)
+    rr(d, (x, y, x + w, y + h), 11, PANEL, HAIR, STROKE)
+    screen = (x + 10, y + 10, x + w - 10, y + h - 16)
+    rr(d, screen, 6, GLASS, HAIR, 1.2)
+    rr(d, (x - 18, y + h + 3, x + w + 18, y + h + 13), 5, PANEL, HAIR, STROKE)
+    seg(d, (x + w / 2 - 20, y + h + 8), (x + w / 2 + 20, y + h + 8), HAIR, 1.2)
+    return lay, screen, (x - 20, y, x + w + 20, y + h + 15)
 
 
-def stream(layer, a, b, phase, color, label, lift=70):
-    """Paket data mengalir di jalur melengkung dari a ke b."""
-    d = ImageDraw.Draw(layer)
+def tablet_art(x, y, w, h):
+    lay = layer()
+    d = ImageDraw.Draw(lay)
+    rr(d, (x, y, x + w, y + h), 14, PANEL, HAIR, STROKE)
+    screen = (x + 9, y + 9, x + w - 9, y + h - 9)
+    rr(d, screen, 8, GLASS, HAIR, 1.2)
+    return lay, screen, (x, y, x + w, y + h)
+
+
+def enter(img, t, start, art, dur=0.95, rise=20):
+    """Benda naik sedikit sambil disingkap dari bawah. Tidak memantul."""
+    k = ease(span(t, start, start + dur))
+    lay, screen, bounds = art(0.0 if k >= 1 else (1 - k) * rise)
+    if k <= 0.002:
+        return img, screen
+    return over(img, reveal(lay, bounds, ease_soft(k))), screen
+
+
+# ---------- benda kecil ----------
+
+def pen(lay, x, y, lift=0.0):
+    """Pena tipis. Ujungnya di titik (x, y); saat terangkat ia menjauh sedikit
+    dan miring lebih tegak, seperti tangan yang mengangkat pena."""
+    d = ImageDraw.Draw(lay)
+    angle = math.radians(-52 - lift * 10)
+    ux, uy = math.cos(angle), math.sin(angle)
+    nx, ny = -uy, ux
+    tipx, tipy = x + lift * 5, y - lift * 7
+
+    def at(along, side=0.0):
+        return (tipx + ux * along + nx * side, tipy + uy * along + ny * side)
+
+    d.polygon([px(*at(0)), px(*at(11, 3.2)), px(*at(11, -3.2))], fill=tuple(INK) + (255,))
+    seg(d, at(11), at(50), INK, 4.6)
+    seg(d, at(50), at(57), ACCENT, 4.6)
+    if lift < 0.25:                     # bayangan kecil saat menyentuh layar
+        circle(d, x, y, 2.2, None, ACCENT, 1.2, int(180 * (1 - lift * 4)))
+
+
+def pointer(lay, x, y, alpha=255):
+    d = ImageDraw.Draw(lay)
+    body = [(x, y), (x, y + 16), (x + 4.2, y + 12.4), (x + 7, y + 18.4),
+            (x + 9.6, y + 17.2), (x + 6.8, y + 11.4), (x + 11.6, y + 11.2)]
+    d.polygon([px(*p) for p in body], fill=tuple(INK) + (alpha,))
+
+
+def tick(lay, x, y, k):
+    """Denyut tipis saat satu titik ditandai."""
+    if k <= 0 or k >= 1:
+        return
+    circle(ImageDraw.Draw(lay), x, y, mix(4, 22, out_quint(k)), None, ACCENT, 1.2,
+           int(150 * (1 - k) ** 2))
+
+
+def dashed(d, a, b, phase, color=HAIR, width=1.3, dash=7, gap=7, alpha=255):
     (ax, ay), (bx, by) = a, b
-    cx, cy = (ax + bx) / 2, min(ay, by) - lift
+    total = math.hypot(bx - ax, by - ay)
+    if total < 1:
+        return
+    ux, uy = (bx - ax) / total, (by - ay) / total
+    pos = -((phase * (dash + gap)) % (dash + gap))
+    while pos < total:
+        s, e = max(0.0, pos), min(total, pos + dash)
+        if e > s:
+            seg(d, (ax + ux * s, ay + uy * s), (ax + ux * e, ay + uy * e), color, width, alpha)
+        pos += dash + gap
 
-    def point(t):
-        u = 1 - t
-        return (u * u * ax + 2 * u * t * cx + t * t * bx,
-                u * u * ay + 2 * u * t * cy + t * t * by)
 
-    guide = [point(i / 40) for i in range(41)]
-    d.line(guide, fill=color + (40,), width=2)
-    for i in range(5):
-        t = ((i / 5) + phase) % 1.0
-        px, py = point(t)
-        fade = int(255 * (0.35 + 0.65 * math.sin(math.pi * t)))
-        d.ellipse([px - 4, py - 4, px + 4, py + 4], fill=color + (fade,))
-    mx, my = point(0.5)
-    f = font(BODY_MED, 14)
-    tw = d.textlength(label, font=f)
-    d.rounded_rectangle([mx - tw / 2 - 10, my - 14, mx + tw / 2 + 10, my + 12], 13,
-                        fill=(16, 22, 31, 225), outline=color + (120,), width=1)
-    d.text((mx - tw / 2, my - 10), label, font=f, fill=color + (255,))
+def chip(d, cx, cy, s, alpha=255):
+    w = text_w(d, s, 11.5, MED)
+    rr(d, (cx - w / 2 - 10, cy - 10, cx + w / 2 + 10, cy + 10), 10, PANEL, HAIR, 1.2, alpha)
+    text(d, s, (cx, cy - 7), 11.5, GREY, MED, center=True, alpha=alpha)
+
+
+# ---------- kerangka adegan ----------
+
+def wordmark(img, t, subtitle):
+    lay = layer()
+    text(ImageDraw.Draw(lay), "Tsunagu-Pad", (54, 34), 27, INK, SEMI, track=0.4)
+    img = over(img, reveal(lay, (46, 26, 430, 74), ease(span(t, 0.1, 0.95)), 2))
+
+    sub = layer()
+    text(ImageDraw.Draw(sub), subtitle, (56, 78), 13.5, GREY, REG)
+    img = over(img, reveal(sub, (48, 72, 600, 98), ease(span(t, 0.35, 1.2)), 2))
+
+    rule = layer()
+    g = ease(span(t, 0.22, 1.1))
+    if g > 0:
+        seg(ImageDraw.Draw(rule), (56, 106), (56 + 92 * g, 106), ACCENT, 2.2)
+    return over(img, rule)
+
+
+def caption(img, t, start, note):
+    k = ease(span(t, start, start + 0.7))
+    if k <= 0.01:
+        return img
+    lay = layer()
+    text(ImageDraw.Draw(lay), note, (OUT_W / 2, OUT_H - 44), 13.5, GREY, REG, center=True)
+    return over(img, reveal(lay, (0, OUT_H - 54, OUT_W, OUT_H - 18), k, 2))
+
+
+def tag(img, t, start, xy, s):
+    k = ease(span(t, start, start + 0.6))
+    if k <= 0.02:
+        return img
+    lay = layer()
+    chip(ImageDraw.Draw(lay), xy[0], xy[1] + (1 - k) * 5, s, int(255 * k))
+    return over(img, lay)
 
 
 TEXTS = {
     "en": {
-        "share_sub": "Your Ubuntu screen on the iPad, controlled from the iPad",
-        "video": "video", "input": "input",
-        "chips": ["touch", "Apple Pencil", "mouse", "keyboard"],
-        "share_foot": "One picture, two screens. Point on the iPad, Ubuntu answers right away.",
-        "airplay_sub": "The iPad screen shown on Ubuntu through AirPlay",
-        "airplay": "AirPlay",
-        "airplay_foot": "Control Center, then Screen Mirroring, then pick Tsunagu-Pad Ubuntu",
-        "second_sub": "The iPad as a real second screen, not a copy of one",
-        "second_label": "second screen",
-        "second_foot": "Drag a window to the right and it keeps running on the iPad.",
+        "share_sub": "Your Ubuntu screen on the iPad, and the iPad drives it",
+        "share_foot": "Mark a point on the iPad; Ubuntu has it a moment later.",
+        "second_sub": "The iPad as a second screen, not a copy of the first",
+        "second_foot": "Drag a window to the right and it keeps running over there.",
+        "airplay_sub": "The iPad screen on Ubuntu, over AirPlay",
+        "airplay_foot": "Control Centre, Screen Mirroring, then Tsunagu-Pad Ubuntu",
+        "ubuntu": "Ubuntu", "ipad": "iPad", "second": "second screen",
     },
     "id": {
-        "share_sub": "Layar Ubuntu kamu di iPad, dikendalikan dari iPad",
-        "video": "video", "input": "kendali",
-        "chips": ["sentuh", "Apple Pencil", "mouse", "keyboard"],
-        "share_foot": "Satu gambar, dua layar. Disentuh di iPad, Ubuntu langsung menjawab.",
+        "share_sub": "Layar Ubuntu di iPad, dan iPad yang mengendalikannya",
+        "share_foot": "Tandai satu titik di iPad, Ubuntu langsung ikut menandai.",
+        "second_sub": "iPad jadi layar kedua, bukan salinan layar pertama",
+        "second_foot": "Seret jendela ke kanan, jalannya terus di sana.",
         "airplay_sub": "Layar iPad tampil di Ubuntu lewat AirPlay",
-        "airplay": "AirPlay",
-        "airplay_foot": "Pusat Kontrol, lalu Pencerminan Layar, lalu pilih Tsunagu-Pad Ubuntu",
-        "second_sub": "iPad sebagai layar kedua sungguhan, bukan salinan layar",
-        "second_label": "layar kedua",
-        "second_foot": "Seret jendela ke kanan, dan jendela itu berjalan di iPad.",
+        "airplay_foot": "Pusat Kontrol, Pencerminan Layar, lalu Tsunagu-Pad Ubuntu",
+        "ubuntu": "Ubuntu", "ipad": "iPad", "second": "layar kedua",
     },
 }
 
-
-def chips(img, labels, active, y):
-    """Deretan label jenis masukan; satu menyala bergantian."""
-    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    d = ImageDraw.Draw(layer)
-    f = font(BODY_MED, 13)
-    widths = [d.textlength(s, font=f) + 26 for s in labels]
-    total = sum(widths) + 10 * (len(labels) - 1)
-    x = (W - total) / 2
-    for i, label in enumerate(labels):
-        on = i == active
-        d.rounded_rectangle([x, y, x + widths[i], y + 28], 14,
-                            fill=(ACCENT + (38,)) if on else (255, 255, 255, 10),
-                            outline=(ACCENT + (190,)) if on else (255, 255, 255, 28), width=1)
-        d.text((x + 13, y + 6), label, font=f, fill=(ACCENT if on else MUTED) + (255,))
-        x += widths[i] + 10
-    return Image.alpha_composite(img, layer)
-
-PATH = [(0.24, 0.72), (0.34, 0.34), (0.60, 0.29), (0.74, 0.64), (0.49, 0.83)]
+MARKS = [(0.27, 0.66), (0.38, 0.33), (0.62, 0.29), (0.75, 0.58), (0.52, 0.78)]
+SHARE_LEN = 7.2
 
 
-def header(img, subtitle):
-    d = ImageDraw.Draw(img)
-    text(d, "Tsunagu-Pad", (56, 36), 31, TEXT, DISPLAY)
-    text(d, subtitle, (58, 78), 15, MUTED, BODY)
-    d.line([(58, 106), (58 + 120, 106)], fill=ACCENT + (255,), width=3)
+def scene_share(t, s):
+    img = stage(t)
+
+    img, lap = enter(img, t, 0.5, lambda lift: laptop_art(64, 150 + lift, 338, 218))
+    img = picture(img, lap, ease(span(t, 1.2, 1.8)))
+    img, tab = enter(img, t, 1.3, lambda lift: tablet_art(534, 158 + lift, 288, 202))
+
+    lay = layer()
+    d = ImageDraw.Draw(lay)
+    link = ease(span(t, 2.0, 2.7))
+    if link > 0:
+        dashed(d, (lap[2] + 14, 262), (mix(lap[2] + 14, tab[0] - 14, link), 262), t * 2.0)
+    img = over(img, lay)
+
+    # Isi layar menyeberang: satu kartu tipis meluncur dari laptop ke iPad.
+    fly = span(t, 2.4, 3.2)
+    if fly < 1:
+        k = ease(fly)
+        img = picture(img, tuple(mix(lap[i], tab[i], k) for i in range(4)), 1.0, framed=True)
+    else:
+        img = picture(img, tab, 1.0)
+
+    lay = layer()
+    d = ImageDraw.Draw(lay)
+    first, gap = 3.4, 0.5
+    on_tab, on_lap = [], []
+    for i, (nx, ny) in enumerate(MARKS):
+        tap = first + i * gap
+        tx, ty = tab[0] + nx * (tab[2] - tab[0]), tab[1] + ny * (tab[3] - tab[1])
+        lx, ly = lap[0] + nx * (lap[2] - lap[0]), lap[1] + ny * (lap[3] - lap[1])
+        if t >= tap:
+            on_tab.append((tx, ty))
+            tick(lay, tx, ty, span(t, tap, tap + 0.5))
+        if t >= tap + 0.13:
+            on_lap.append((lx, ly))
+            tick(lay, lx, ly, span(t, tap + 0.13, tap + 0.6))
+
+    done = first + (len(MARKS) - 1) * gap
+    closed = len(on_tab) == len(MARKS) and t > done + 0.3
+    for pts in (on_tab, on_lap):
+        if len(pts) > 1:
+            path = pts + ([pts[0]] if closed and len(pts) == len(MARKS) else [])
+            d.line([px(*p) for p in path], fill=tuple(ACCENT) + (255,),
+                   width=max(1, int(1.8 * SS)), joint="curve")
+        for p in pts:
+            circle(d, p[0], p[1], 3.4, PANEL, ACCENT, 1.6)
+
+    # Gerak pena: masuk dari luar bingkai, melayang ke titik berikutnya, menukik
+    # saat menandai, lalu diangkat lagi. Satu tahap, satu ketukan.
+    enter_at = first - 0.75
+    if t >= enter_at:
+        n = len(MARKS)
+        prog = (t - first) / gap
+        i = max(0, min(n - 1, math.floor(prog) + 1))
+        if t < first:
+            local = span(t, enter_at, first)
+            away = (MARKS[0][0] + 0.26, MARKS[0][1] + 0.42)
+            p = mixp(away, MARKS[0], ease(local))
+            lift = 1 - ease(local) * 0.65
+        else:
+            local = clamp(prog - (i - 1)) if i > 0 else 1.0
+            travel = ease(clamp(local / 0.7))
+            press = clamp((local - 0.7) / 0.3)
+            p = mixp(MARKS[max(0, i - 1)], MARKS[i], travel)
+            lift = max(1 - press, math.sin(math.pi * clamp(local / 0.7)) * 0.85)
+            if t > done + 0.25:         # selesai: pena diangkat keluar
+                out = ease(span(t, done + 0.25, done + 0.9))
+                p = mixp(MARKS[-1], (MARKS[-1][0] + 0.2, MARKS[-1][1] + 0.34), out)
+                lift = max(lift, out)
+        if t <= done + 0.95:
+            pen(lay, tab[0] + p[0] * (tab[2] - tab[0]),
+                tab[1] + p[1] * (tab[3] - tab[1]), lift)
+    img = over(img, lay)
+
+    img = wordmark(img, t, s["share_sub"])
+    img = tag(img, t, 2.1, (233, 398), s["ubuntu"])
+    img = tag(img, t, 2.3, (678, 380), s["ipad"])
+    img = caption(img, t, 6.0, s["share_foot"])
     return img
 
 
-def footer(img, note):
-    d = ImageDraw.Draw(img)
-    text(d, note, (W / 2, H - 46), 14, MUTED, BODY, center=True)
+SECOND_LEN = 7.2
+
+
+def scene_second(t, s):
+    img = stage(t)
+
+    img, lap = enter(img, t, 0.5, lambda lift: laptop_art(56, 156 + lift, 342, 220))
+    img, tab = enter(img, t, 1.25, lambda lift: tablet_art(546, 168 + lift, 280, 196))
+
+    lay = layer()
+    d = ImageDraw.Draw(lay)
+    y = 268
+    link = ease(span(t, 4.6, 5.3))
+    if link > 0:
+        dashed(d, (lap[2] + 14, y), (mix(lap[2] + 14, tab[0] - 14, link), y), t * 2.0)
+        if link > 0.85:
+            chip(d, (lap[2] + tab[0]) / 2, y, s["second"], int(255 * span(t, 5.2, 5.6)))
+
+    stay = int(255 * ease(span(t, 1.6, 2.1)))
+    if stay > 3:
+        window_card(d, (lap[0] + 16, lap[1] + 18, lap[0] + 124, lap[1] + 98), stay)
+
+    move = span(t, 3.2, 4.5)
+    k = ease(move)
+    src = (lap[0] + 138, lap[1] + 52, lap[0] + 250, lap[1] + 142)
+    dst = (tab[0] + 22, tab[1] + 32, tab[0] + 164, tab[1] + 146)
+    box = tuple(mix(src[i], dst[i], k) for i in range(4))
+    if t > 2.0:
+        drag = int(255 * ease(span(t, 2.0, 2.5)))
+        window_card(d, box, drag, 4, accent=0.02 < move < 1)
+        if move < 1:
+            pointer(lay, box[0] + 20, box[1] + 7)
+        else:
+            pk = ease(span(t, 4.5, 5.2))
+            pointer(lay, mix(box[0] + 20, box[0] + 98, pk), mix(box[1] + 7, box[1] + 66, pk))
+
+    img = over(img, lay)
+    img = wordmark(img, t, s["second_sub"])
+    img = tag(img, t, 1.9, (227, 402), s["ubuntu"])
+    img = tag(img, t, 2.1, (686, 382), s["ipad"])
+    img = caption(img, t, 5.9, s["second_foot"])
     return img
 
 
-def frame_share(i, total, lang="en"):
+AIRPLAY_LEN = 6.4
+
+
+def scene_airplay(t, s):
+    img = stage(t)
+
+    img, tab = enter(img, t, 0.5, lambda lift: tablet_art(86, 170 + lift, 252, 188))
+    img = picture(img, tab, ease(span(t, 1.15, 1.75)))
+    img, lap = enter(img, t, 1.25, lambda lift: laptop_art(470, 150 + lift, 348, 224))
+
+    lay = layer()
+    d = ImageDraw.Draw(lay)
+    win = (lap[0] + 20, lap[1] + 22, lap[2] - 20, lap[3] - 16)
+    win_a = int(255 * ease(span(t, 2.3, 2.9)))
+    if win_a > 3:
+        window_card(d, win, win_a, lines=0)
+    link = ease(span(t, 2.0, 2.8))
+    if link > 0:
+        dashed(d, (tab[2] + 14, 264), (mix(tab[2] + 14, win[0] - 14, link), 264), t * 2.0)
+    img = over(img, lay)
+
+    inner = (win[0] + 9, win[1] + 22, win[2] - 9, win[3] - 9)
+    fly = span(t, 2.8, 3.7)
+    if fly > 0:
+        box = tuple(mix(tab[i], inner[i], ease(fly)) for i in range(4))
+        img = picture(img, box, 1.0, framed=fly < 1)
+
+    img = wordmark(img, t, s["airplay_sub"])
+    img = tag(img, t, 1.7, (212, 386), s["ipad"])
+    img = tag(img, t, 2.3, (644, 400), s["ubuntu"])
+    img = caption(img, t, 4.8, s["airplay_foot"])
+    return img
+
+
+# ---------- render ----------
+
+def render(scene, length, lang, tmp):
     s = TEXTS[lang]
-    img = header(backdrop(), s["share_sub"])
-
-    intro = ease(i / (total * 0.18))
-    img, lap = laptop(img, 60, 150, 348, 226)
-    img, tab = tablet(img, 520, 152, 300, 214)
-    d = ImageDraw.Draw(img)
-    stairs(d, lap)
-    stairs(d, tab)
-
-    hold = total * 0.16
-    span = max(1.0, total - hold)
-    walk = max(0.0, (i - hold)) / span * (len(PATH) - 0.001)
-    count = min(len(PATH), int(walk) + 1)
-    seg = walk - int(walk)
-    a = PATH[max(0, int(walk) - 1)] if int(walk) else PATH[0]
-    b = PATH[min(len(PATH) - 1, int(walk))]
-    k = ease(seg)
-    cur = (a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k)
-
-    img = Image.alpha_composite(img, polygon_layer(lap, PATH, count, seg))
-    img = Image.alpha_composite(img, polygon_layer(tab, PATH, count, seg))
-
-    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    px = tab[0] + cur[0] * (tab[2] - tab[0])
-    py = tab[1] + cur[1] * (tab[3] - tab[1])
-    pen_cursor(layer, px, py, seg > 0.82 or seg < 0.12)
-    phase = (i / total) * 2.2 % 1.0
-    stream(layer, (412, 230), (512, 230), phase, ACCENT, s["video"], 58)
-    stream(layer, (512, 320), (412, 320), phase, MARK, s["input"], -52)
-    img = Image.alpha_composite(img, layer)
-
-    d = ImageDraw.Draw(img)
-    text(d, "Ubuntu", (234, 404), 14, MUTED, BODY_MED, center=True)
-    text(d, "iPad", (670, 382), 14, MUTED, BODY_MED, center=True)
-    img = chips(img, s["chips"], int(i / total * len(s["chips"])) % len(s["chips"]), 112)
-    if intro < 1:
-        veil = Image.new("RGBA", (W, H), (9, 12, 18, int(255 * (1 - intro))))
-        img = Image.alpha_composite(img, veil)
-    return footer(img, s["share_foot"]).convert("RGB")
+    frames = int(length * FPS)
+    for i in range(frames):
+        acc = None
+        for j in range(SUB):
+            t = (i + j / SUB) / FPS
+            frame = scene(t, s).convert("RGB")
+            acc = frame if acc is None else Image.blend(acc, frame, 1 / (j + 1))
+        acc.resize((OUT_W, OUT_H), Image.LANCZOS).save(tmp / f"f{i:04d}.png")
+    return frames
 
 
-def card(d, box, grow):
-    x0, y0, x1, y1 = box
-    w, h = x1 - x0, y1 - y0
-    d.rectangle(box, fill=(24, 31, 42))
-    d.rounded_rectangle([x0 + w * 0.08, y0 + h * 0.12, x1 - w * 0.08, y0 + h * 0.34], 10,
-                        fill=(33, 43, 57))
-    d.rounded_rectangle([x0 + w * 0.08, y0 + h * 0.12, x0 + w * 0.08 + w * 0.3, y0 + h * 0.34], 10,
-                        fill=ACCENT)
-    base = y1 - h * 0.16
-    bars = 6
-    bw = w * 0.085
-    gap = w * 0.045
-    start = x0 + w * 0.12
-    for b in range(bars):
-        hgt = h * (0.1 + 0.26 * (0.5 + 0.5 * math.sin((b + grow) * 0.9)))
-        bx = start + b * (bw + gap)
-        d.rounded_rectangle([bx, base - hgt, bx + bw, base], 4,
-                            fill=ACCENT if b % 2 else MARK)
-    d.line([x0 + w * 0.08, base + 7, x1 - w * 0.08, base + 7], fill=(44, 55, 71), width=2)
+def to_gif(tmp, out):
+    """Palet dihitung dari isinya sendiri supaya garis tipis tidak pecah."""
+    pal = tmp / "palette.png"
+    src = ["-framerate", str(FPS), "-i", str(tmp / "f%04d.png")]
+    subprocess.run(["ffmpeg", "-y", "-v", "error", *src, "-vf",
+                    "palettegen=max_colors=96:stats_mode=diff", str(pal)], check=True)
+    subprocess.run(["ffmpeg", "-y", "-v", "error", *src, "-i", str(pal), "-lavfi",
+                    "paletteuse=dither=none:diff_mode=rectangle", "-loop", "0",
+                    str(out)], check=True)
 
 
-def frame_airplay(i, total, lang="en"):
-    s = TEXTS[lang]
-    img = header(backdrop(), s["airplay_sub"])
-    img, tab = tablet(img, 70, 152, 300, 214)
-    img, lap = laptop(img, 470, 150, 348, 226)
-    d = ImageDraw.Draw(img)
-    grow = i * 0.22
-    card(d, tab, grow)
-    card(d, lap, grow)
-
-    # Garis pindai tipis di layar Ubuntu: tanda gambar baru saja tiba.
-    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    sweep = (i / total * 1.6) % 1.3
-    if sweep <= 1:
-        sy = lap[1] + (lap[3] - lap[1]) * sweep
-        ImageDraw.Draw(layer).rectangle([lap[0], sy - 10, lap[2], sy + 10], fill=ACCENT + (34,))
-    phase = (i / total) * 2.2 % 1.0
-    stream(layer, (374, 250), (466, 250), phase, ACCENT, s["airplay"], 62)
-    img = Image.alpha_composite(img, layer.filter(ImageFilter.GaussianBlur(0.4)))
-
-    d = ImageDraw.Draw(img)
-    text(d, "iPad", (220, 382), 14, MUTED, BODY_MED, center=True)
-    text(d, "Ubuntu", (644, 404), 14, MUTED, BODY_MED, center=True)
-    return footer(img, s["airplay_foot"]).convert("RGB")
+def build(name, scene, length, lang, outdir):
+    out = outdir / (f"demo-{name}.gif" if lang == "en" else f"demo-{name}-{lang}.gif")
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        render(scene, length, lang, tmp)
+        to_gif(tmp, out)
+    print(f"{out.name}: {out.stat().st_size / 1024:.0f} KB")
 
 
-def window(layer, box, title_w, accent=False):
-    """Jendela aplikasi sederhana: bilah judul dan beberapa baris isi."""
-    d = ImageDraw.Draw(layer)
-    x0, y0, x1, y1 = box
-    w, h = x1 - x0, y1 - y0
-    d.rounded_rectangle(box, 8, fill=(30, 39, 52, 255), outline=EDGE + (255,), width=2)
-    d.rounded_rectangle([x0, y0, x1, y0 + max(10, h * 0.16)], 8, fill=(40, 51, 67, 255))
-    d.ellipse([x0 + 9, y0 + 7, x0 + 15, y0 + 13], fill=MARK + (255,))
-    d.rounded_rectangle([x0 + 24, y0 + 8, x0 + 24 + title_w, y0 + 12], 2,
-                        fill=(ACCENT if accent else MUTED) + (255,))
-    for row in range(3):
-        top = y0 + h * (0.34 + row * 0.19)
-        d.rounded_rectangle([x0 + w * 0.08, top, x0 + w * (0.86 - row * 0.16), top + max(4, h * 0.07)],
-                            3, fill=(58, 72, 90, 255))
-
-
-def lerp_box(a, b, t):
-    return tuple(a[i] + (b[i] - a[i]) * t for i in range(4))
-
-
-def frame_second(i, total, lang="en"):
-    """Adegan 3: jendela diseret dari layar Ubuntu ke layar kedua di iPad."""
-    s = TEXTS[lang]
-    img = header(backdrop(), s["second_sub"])
-    img, lap = laptop(img, 60, 150, 348, 226)
-    img, tab = tablet(img, 520, 152, 300, 214)
-
-    d = ImageDraw.Draw(img)
-    gradient_screen(d, lap, (26, 34, 46), (17, 23, 32))
-    gradient_screen(d, tab, (24, 31, 42), (16, 21, 30))
-
-    layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    # Jendela yang tinggal diam di layar laptop.
-    window(layer, (lap[0] + 14, lap[1] + 16, lap[0] + 150, lap[1] + 110), 48)
-
-    start = (lap[0] + 120, lap[1] + 60, lap[2] - 14, lap[3] - 16)
-    end = (tab[0] + 10, tab[1] + 10, tab[2] - 10, tab[3] - 10)
-    hold = total * 0.18
-    glide = ease(max(0.0, (i - hold)) / max(1.0, total * 0.6))
-    box = lerp_box(start, end, glide)
-    shadow_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    ImageDraw.Draw(shadow_layer).rounded_rectangle(
-        [box[0], box[1] + 10, box[2], box[3] + 10], 10, fill=(0, 0, 0, 120))
-    layer.alpha_composite(shadow_layer.filter(ImageFilter.GaussianBlur(14)))
-    window(layer, box, 60, accent=True)
-
-    # Kursor yang menarik jendela itu.
-    pen_cursor(layer, box[0] + 34, box[1] + 10, glide > 0.02 and glide < 0.99)
-
-    phase = (i / total) * 2.2 % 1.0
-    stream(layer, (412, 250), (512, 250), phase, ACCENT, s["second_label"], 96)
-    img = Image.alpha_composite(img, layer)
-
-    d = ImageDraw.Draw(img)
-    text(d, "Ubuntu", (234, 404), 14, MUTED, BODY_MED, center=True)
-    text(d, "iPad", (670, 382), 14, MUTED, BODY_MED, center=True)
-    return footer(img, s["second_foot"]).convert("RGB")
-
-
-def render(name, maker, frames, lang):
-    out = pathlib.Path("docs/media") / name
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = pathlib.Path(tmp)
-        for i in range(frames):
-            maker(i, frames, lang).save(tmp / f"f{i:04d}.png")
-        palette = tmp / "palette.png"
-        base = ["ffmpeg", "-y", "-loglevel", "error", "-framerate", str(FPS),
-                "-i", str(tmp / "f%04d.png")]
-        subprocess.run(base + ["-vf", "palettegen=max_colors=96:stats_mode=diff", str(palette)],
-                       check=True)
-        subprocess.run(base + ["-i", str(palette),
-                               "-lavfi", "paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle",
-                               "-loop", "0", str(out)], check=True)
-    print(f"{out}  {out.stat().st_size // 1024} KB")
+def main():
+    if not shutil.which("ffmpeg"):
+        sys.exit("ffmpeg belum terpasang: sudo apt install ffmpeg")
+    outdir = pathlib.Path("docs/media")
+    outdir.mkdir(parents=True, exist_ok=True)
+    jobs = [("share", scene_share, SHARE_LEN),
+            ("second", scene_second, SECOND_LEN),
+            ("airplay", scene_airplay, AIRPLAY_LEN)]
+    only = sys.argv[1:] or None
+    for name, scene, length in jobs:
+        if only and name not in only:
+            continue
+        for lang in ("en", "id"):
+            build(name, scene, length, lang, outdir)
 
 
 if __name__ == "__main__":
-    if not shutil.which("ffmpeg"):
-        raise SystemExit("ffmpeg tidak ditemukan")
-    render("demo-share.gif", frame_share, 96, "en")
-    render("demo-share-id.gif", frame_share, 96, "id")
-    render("demo-second.gif", frame_second, 80, "en")
-    render("demo-second-id.gif", frame_second, 80, "id")
-    render("demo-airplay.gif", frame_airplay, 56, "en")
-    render("demo-airplay-id.gif", frame_airplay, 56, "id")
+    main()

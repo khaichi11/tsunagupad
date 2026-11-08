@@ -14,12 +14,18 @@ The Ubuntu screen appears on the iPad, and touch, Apple Pencil, mouse, and
 keyboard from the iPad drive Ubuntu. Drawing on the iPad lands in the Ubuntu
 application at once.
 
+![The iPad used as a second screen](docs/media/demo-second.gif)
+
+On Wayland the iPad can be a second screen instead of a copy of the first one:
+a monitor with no cable, with windows dragged onto it and the pointer crossing
+over as on any other screen.
+
 ![iPad screen shown on Ubuntu through AirPlay](docs/media/demo-airplay.gif)
 
 The other direction: the iPad screen is shown on Ubuntu through AirPlay, using
 the Screen Mirroring button that iPadOS already has.
 
-Both animations are drawn by [docs/make_demo.py](docs/make_demo.py), not
+The animations are drawn by [docs/make_demo.py](docs/make_demo.py), not
 recorded from a real desktop, so no private screen content is published here.
 Run `python3 docs/make_demo.py` to rebuild them.
 
@@ -121,6 +127,29 @@ fingers to right click, drag two fingers to scroll. Apple Pencil draws with
 pressure, which works in apps such as Xournal++ and Krita. A small menu at the
 top of the screen holds the keyboard, the touch mode, the language, and the
 connection info.
+
+### Use the iPad as a second screen
+
+Wayland only. The screen comes from the compositor's virtual monitor, which
+Xorg does not have, so on an Xorg session the command stops with a message
+instead of starting; the panel hides the switch there as well. If you are on
+Xorg, log out and pick Ubuntu on Wayland at the login screen, or share the
+screen you already have.
+
+```bash
+tsunagupad share --second 1280x800
+```
+
+GNOME gains a monitor that no cable is attached to. Windows can be dragged onto
+it, and the pointer from the laptop crosses onto it and is drawn into the
+picture, so it behaves like any other screen. Drag it into place once in
+Settings, Displays, and GNOME remembers where it sits.
+
+The size is the desktop the iPad gets. `--scale` changes how large everything
+on it looks: `1` by default, so a 1280x800 screen really is 1280 by 800 points
+of room, `1.5` for larger text in two thirds of the room, or `ikut` to match
+the scale of the main monitor. If an application refuses to fit, give it a
+larger screen (`--second 1640x1024`) rather than a larger scale.
 
 ### Show the iPad screen
 

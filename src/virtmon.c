@@ -25,7 +25,8 @@ struct _Virtmon {
     char *stream;           /* jalur stream, dipakai sebagai acuan koordinat */
     guint32 node;
     int width, height;
-    double scale;           /* skala monitor virtual di tata letak */
+    double scale;           /* skala yang dipakai sekarang */
+    double want;            /* skala pilihan pengguna; 0 = ikut monitor utama */
     gboolean hide_cursor;
 };
 
@@ -83,12 +84,13 @@ static GVariant *mutter_call(Virtmon *v, const char *name, const char *path, con
                                        G_DBUS_CALL_FLAGS_NONE, 5000, NULL, error);
 }
 
-Virtmon *virtmon_open(int width, int height, gboolean hide_cursor, GError **error)
+Virtmon *virtmon_open(int width, int height, gboolean hide_cursor, double scale, GError **error)
 {
     Virtmon *v = g_new0(Virtmon, 1);
     v->width = width;
     v->height = height;
     v->hide_cursor = hide_cursor;
+    v->want = scale;
     v->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, error);
     if (!v->bus) {
         virtmon_close(v);
@@ -341,13 +343,15 @@ gboolean virtmon_place(Virtmon *v, GError **error)
             }
         }
 
-        /* Skala yang paling mendekati, dari yang didukung mode monitor virtual. */
-        gdouble want_scale = 1.0;
+        /* Skala yang diminta pengguna; kalau tidak diminta, ikut monitor utama.
+         * Nilainya dibulatkan ke pilihan terdekat yang didukung mode ini. */
+        gdouble target = v->want > 0 ? v->want : main_scale;
+        gdouble want_scale = target;
         {
             ModeInfo *vinfo = g_hash_table_lookup(modes, virt);
             gdouble best = -1;
             for (int i = 0; vinfo && i < vinfo->n_scales; i++) {
-                gdouble d = ABS(vinfo->scales[i] - main_scale);
+                gdouble d = ABS(vinfo->scales[i] - target);
                 if (best < 0 || d < best) {
                     best = d;
                     want_scale = vinfo->scales[i];

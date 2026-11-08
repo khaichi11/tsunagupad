@@ -99,7 +99,8 @@ gboolean virtmon_available(void);
 Pwcap *pwcap_open(guint32 node, int width, int height, PwcapCb cb, gpointer user, GError **error);
 void pwcap_close(Pwcap *p);
 
-Virtmon *virtmon_open(int width, int height, gboolean hide_cursor, GError **error);
+Virtmon *virtmon_open(int width, int height, gboolean hide_cursor, double scale,
+                      GError **error);
 guint32 virtmon_node(Virtmon *v);
 void virtmon_size(Virtmon *v, int *w, int *h);
 void virtmon_pointer(Virtmon *v, double x, double y);
