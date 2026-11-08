@@ -694,6 +694,7 @@ static int cmd_on(int argc, char **argv)
     pid_t pid = fork();
     if (pid == 0) {
         setsid();
+        g_setenv("TSUNAGUPAD_DETACHED", "1", TRUE);
         dup2(fd, STDOUT_FILENO);
         dup2(fd, STDERR_FILENO);
         close(fd);
@@ -810,8 +811,11 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
-    /* Ikut berhenti bila GNOME Shell (induk proses) keluar. */
-    prctl(PR_SET_PDEATHSIG, SIGTERM);
+    /* Ikut berhenti bila GNOME Shell (induk proses) keluar. Tidak berlaku untuk
+     * sesi yang dilepas lewat "tsunagupad on": induknya memang langsung selesai
+     * setelah mencetak alamat, dan tanpa pengecualian ini daemonnya ikut mati. */
+    if (!g_getenv("TSUNAGUPAD_DETACHED"))
+        prctl(PR_SET_PDEATHSIG, SIGTERM);
 
     if (argc < 2) {
         usage();
