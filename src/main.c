@@ -373,7 +373,9 @@ static int cmd_share(int argc, char **argv)
         GError *perr = NULL;
         if (second) {
             if (!virtmon_available())
-                return fail("Layar kedua hanya tersedia di sesi Wayland GNOME.");
+                return fail("Layar kedua hanya tersedia di sesi Wayland GNOME. "
+                            "Di mesin tanpa layar (misalnya Jetson), jalankan dulu sesi "
+                            "GNOME-nya, lalu jalankan perintah ini di dalam sesi itu.");
             int vw = 0, vh = 0;
             if (sscanf(second, "%dx%d", &vw, &vh) != 2 || vw < 320 || vh < 240)
                 return fail("Format --second harus LEBARxTINGGI, mis. 1280x800");

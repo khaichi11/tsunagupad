@@ -359,7 +359,7 @@ gboolean virtmon_place(Virtmon *v, GError **error)
         GVariantBuilder out;
         g_variant_builder_init(&out, G_VARIANT_TYPE("a(iiduba(ssa{sv}))"));
         int right = 0;
-        gboolean placed = FALSE, rescaled = FALSE;
+        gboolean placed = FALSE, rescaled = FALSE, any_monitor = FALSE;
         GVariantIter liter;
         gint32 lx = 0, ly = 0;
         gdouble scale = 1.0;
@@ -402,6 +402,7 @@ gboolean virtmon_place(Virtmon *v, GError **error)
             }
             g_variant_builder_add(&out, "(iiduba(ssa{sv}))", lx, ly, scale, transform,
                                   primary, &mon);
+            any_monitor = TRUE;
             if (scale > 0)
                 right = MAX(right, lx + (int) (width / scale));
             g_clear_pointer(&members, g_variant_unref);
@@ -425,8 +426,10 @@ gboolean virtmon_place(Virtmon *v, GError **error)
             g_variant_builder_init(&empty, G_VARIANT_TYPE_VARDICT);
             g_variant_builder_add(&mon, "(ssa{sv})", virt, info ? info->mode : "", &empty);
 
-            g_variant_builder_add(&out, "(iiduba(ssa{sv}))", right, 0, want_scale, 0u, FALSE,
-                                  &mon);
+            /* Di mesin tanpa layar sama sekali (misalnya Jetson headless),
+             * monitor virtual ini satu-satunya, jadi dia yang jadi utama. */
+            g_variant_builder_add(&out, "(iiduba(ssa{sv}))", right, 0, want_scale, 0u,
+                                  !any_monitor, &mon);
 
             GVariant *reply = g_dbus_connection_call_sync(
                 v->bus, "org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",

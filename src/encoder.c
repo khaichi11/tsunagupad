@@ -5,8 +5,9 @@
 
 typedef struct {
     const char *name;
-    const char *fmt;        /* argumen berurutan: lebar, tinggi, kbps, gop, vbv(kbit) */
+    const char *fmt;        /* argumen berurutan: lebar, tinggi, laju, gop, vbv(kbit) */
     gboolean retune;        /* bitrate bisa diubah saat stream berjalan */
+    gboolean bps;           /* properti bitrate dalam bit/detik, bukan kbit/detik */
 } Encoder;
 
 /* Urutan = prioritas untuk mode "auto". Semua tanpa B-frame agar tidak ada
@@ -31,12 +32,20 @@ static const Encoder encoders[] = {
       TRUE },
     { "intel",
       "vaapipostproc ! video/x-raw(memory:VASurface),format=NV12,width=%d,height=%d ! "
-      "vaapih264enc name=enc rate-control=cbr bitrate=%d keyframe-period=%d max-bframes=0 cpb-length=100",
+      "vaapih264enc name=enc rate-control=cbr bitrate=%d keyframe-period=%d max-bframes=0 cpb-length=350",
       FALSE },
+    /* Jetson (L4T). Encoder Tegra memakai memori NVMM dan bitrate dalam bit per
+     * detik. Elemen ini tidak ada di PC biasa, jadi uji coba di encoder_pick
+     * otomatis melewatinya. */
+    { "tegra",
+      "nvvidconv ! video/x-raw(memory:NVMM),format=NV12,width=%d,height=%d ! "
+      "nvv4l2h264enc name=enc control-rate=1 bitrate=%d iframeinterval=%d "
+      "profile=0 preset-level=1 insert-sps-pps=true maxperf-enable=true",
+      TRUE, TRUE },
     { "cpu",
       "videoconvertscale n-threads=4 ! video/x-raw,format=I420,width=%d,height=%d ! "
       "x264enc name=enc tune=zerolatency speed-preset=ultrafast bitrate=%d key-int-max=%d bframes=0 "
-      "vbv-buf-capacity=100 threads=4 sliced-threads=true",
+      "vbv-buf-capacity=350 threads=4 sliced-threads=true",
       TRUE },
 };
 
@@ -54,16 +63,30 @@ gboolean encoder_can_retune(const char *name)
     return e && e->retune;
 }
 
+int encoder_bitrate_unit(const char *name)
+{
+    const Encoder *e = find(name);
+    return e && e->bps ? 1000 : 1;
+}
+
 char *encoder_fragment(const char *name, int w, int h, int fps, int kbps, int max_kbps)
 {
     const Encoder *e = find(name);
     if (!e)
         return NULL;
-    /* Keyframe tiap detik mempercepat pemulihan saat paket hilang. VBV dihitung
-     * dari bitrate maksimum supaya bitrate adaptif tetap bisa naik ke batasnya. */
-    int gop = fps;
-    int vbv = MAX(MAX(kbps, max_kbps) / MAX(fps, 1), 50);
-    return g_strdup_printf(e->fmt, w, h, kbps, gop, vbv);
+    /* Keyframe jarang saja. WebRTC sudah punya NACK dan permintaan keyframe
+     * (PLI), jadi keyframe berkala hanya membuang bit: tiap keyframe memakan
+     * jatah bitrate satu detik berikutnya, gambarnya jadi buram sebentar lalu
+     * jernih lagi, berulang terus. Sekarang keyframe hanya dikirim sepuluh
+     * detik sekali atau saat iPad memintanya.
+     *
+     * Penyangga bitrate (CPB/VBV) diberi sekitar sepertiga detik, bukan satu
+     * frame. Dengan satu frame, frame yang ramai langsung dipaksa kasar; dengan
+     * sepertiga detik encoder boleh meminjam bit sebentar dan kualitasnya jauh
+     * lebih rata, tanpa menambah jeda yang terasa. */
+    int gop = fps * 10;
+    int vbv = MAX(MAX(kbps, max_kbps) / 3, 500);
+    return g_strdup_printf(e->fmt, w, h, kbps * encoder_bitrate_unit(name), gop, vbv);
 }
 
 /* Jalankan 5 frame uji; driver bisa saja menolak walau plugin-nya ada. */
@@ -72,7 +95,8 @@ static gboolean probe(const Encoder *e)
     char *frag = encoder_fragment(e->name, 640, 360, 30, 2000, 2000);
     char *desc = g_strdup_printf(
         "videotestsrc num-buffers=5 ! video/x-raw,format=BGRx,width=640,height=360,framerate=30/1 ! "
-        "%s ! video/x-h264,profile=constrained-baseline ! h264parse ! fakesink", frag);
+        "%s ! video/x-h264,profile=(string){ constrained-baseline, baseline } ! "
+        "h264parse ! fakesink", frag);
     g_free(frag);
 
     GError *err = NULL;

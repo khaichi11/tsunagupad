@@ -36,6 +36,7 @@ static struct {
     gint64 calm_since;      /* terakhir kali ada paket hilang (µs) */
     gint64 lost;
     guint64 sent, pli;
+    int rough;              /* laporan berturut-turut yang kehilangan paket */
 } adapt;
 
 static gboolean debug_enabled(void)
@@ -189,7 +190,7 @@ static void set_bitrate(App *app, int kbps)
     if (kbps == app->kbps_now)
         return;
     app->kbps_now = kbps;
-    g_object_set(app->enc, "bitrate", (guint) kbps, NULL);
+    g_object_set(app->enc, "bitrate", (guint) (kbps * encoder_bitrate_unit(app->enc_name)), NULL);
     char *text = g_strdup_printf("%d", kbps);
     tsunagu_event("bitrate", "kbps", text, NULL);
     g_free(text);
@@ -213,18 +214,24 @@ static gboolean report_dispatch(gpointer data)
     double loss = r->fraction_lost;
     if (adapt.sent && r->sent > adapt.sent && r->lost >= adapt.lost)
         loss = MAX(loss, (double) (r->lost - adapt.lost) / (double) (r->sent - adapt.sent));
-    /* Permintaan keyframe (PLI) di awal sambungan itu wajar; setelahnya tanda gambar rusak. */
-    gboolean picture_lost = adapt.sent && r->pli > adapt.pli &&
-                            now - adapt.connected > 3 * G_USEC_PER_SEC;
     adapt.sent = r->sent;
     adapt.lost = r->lost;
     adapt.pli = r->pli;
 
-    if (loss > 0.03 || picture_lost) {
-        adapt.calm_since = now;
-        set_bitrate(app, (int) (app->kbps_now * (loss > 0.10 ? 0.6 : 0.8)));
-    } else if (now - adapt.calm_since > 3 * G_USEC_PER_SEC) {
-        set_bitrate(app, (int) (app->kbps_now * 1.08) + 150);
+    /* Turun hanya kalau paket benar-benar hilang dua laporan berturut-turut.
+     * Versi sebelumnya ikut turun begitu ada satu permintaan keyframe, padahal
+     * permintaan itu sendiri sering muncul justru karena bitrate baru saja
+     * diturunkan: gambarnya naik-turun terus tanpa jaringan benar-benar sempit. */
+    if (loss > 0.04) {
+        adapt.rough++;
+        if (adapt.rough >= 2) {
+            adapt.calm_since = now;
+            set_bitrate(app, (int) (app->kbps_now * (loss > 0.12 ? 0.75 : 0.9)));
+        }
+    } else {
+        adapt.rough = 0;
+        if (now - adapt.calm_since > 2 * G_USEC_PER_SEC)
+            set_bitrate(app, (int) (app->kbps_now * 1.10) + 200);
     }
     if (debug_enabled())
         g_printerr("adapt: loss=%.3f pli=%" G_GUINT64_FORMAT " sent=%" G_GUINT64_FORMAT " kbps=%d\n",
@@ -479,7 +486,8 @@ static struct {
     gboolean cursor_valid;
     gint64 last_push;
     guint pending;
-    guint keepalive;            /* denyut agar pencampur tidak pernah kehabisan frame */
+    guint keepalive;            /* denyut agar aliran tidak pernah kosong */
+    GstBuffer *last;            /* frame terakhir yang sudah jadi, siap diulang */
     int fps;
 } feed;
 
@@ -508,6 +516,41 @@ static void cursor_blend(guint8 *data, int stride, int w, int h)
     }
 }
 
+/* Memberi cap waktu dari jam pipeline lalu mendorongnya ke appsrc. Kalau cap
+ * waktunya diserahkan ke appsrc, frame pertama bisa bercap waktu dari sebelum
+ * pipeline punya base time, dan pencampur akan menunggu selamanya. */
+static void feed_send(GstElement *src, GstBuffer *out, int fps)
+{
+    GstClock *clock = gst_element_get_clock(src);
+    if (clock) {
+        GstClockTime base = gst_element_get_base_time(src);
+        GstClockTime now = gst_clock_get_time(clock);
+        GST_BUFFER_PTS(out) = now > base ? now - base : 0;
+        GST_BUFFER_DTS(out) = GST_BUFFER_PTS(out);
+        GST_BUFFER_DURATION(out) = GST_SECOND / MAX(fps, 1);
+        gst_object_unref(clock);
+    }
+
+    GstFlowReturn ret = GST_FLOW_OK;
+    g_signal_emit_by_name(src, "push-buffer", out, &ret);
+    gst_buffer_unref(out);
+
+    if (g_getenv("TSUNAGUPAD_DEBUG")) {
+        static int n;
+        static gint64 t0;
+        gint64 now = g_get_monotonic_time();
+        n++;
+        if (!t0)
+            t0 = now;
+        if (now - t0 > 2000000) {
+            g_printerr("pipeline layar kedua: %.1f fps dikirim ke encoder (%s)\n",
+                       n / ((now - t0) / 1e6), gst_flow_get_name(ret));
+            n = 0;
+            t0 = now;
+        }
+    }
+}
+
 static void feed_push(void)
 {
     g_mutex_lock(&feed.lock);
@@ -530,38 +573,10 @@ static void feed_push(void)
     GstElement *src = gst_object_ref(feed.src);
     int fps = feed.fps;
     feed.last_push = g_get_monotonic_time();
+    gst_buffer_replace(&feed.last, out);
     g_mutex_unlock(&feed.lock);
 
-    /* Cap waktu diisi dari jam pipeline. Kalau diserahkan ke appsrc, frame
-     * pertama bisa bercap waktu sebelum pipeline punya base time dan pencampur
-     * akan menunggu selamanya. */
-    GstClock *clock = gst_element_get_clock(src);
-    if (clock) {
-        GstClockTime base = gst_element_get_base_time(src);
-        GstClockTime now = gst_clock_get_time(clock);
-        GST_BUFFER_PTS(out) = now > base ? now - base : 0;
-        GST_BUFFER_DTS(out) = GST_BUFFER_PTS(out);
-        GST_BUFFER_DURATION(out) = GST_SECOND / MAX(fps, 1);
-        gst_object_unref(clock);
-    }
-
-    GstFlowReturn ret = GST_FLOW_OK;
-    g_signal_emit_by_name(src, "push-buffer", out, &ret);
-    if (g_getenv("TSUNAGUPAD_DEBUG")) {
-        static int n;
-        static gint64 t0;
-        gint64 now = g_get_monotonic_time();
-        n++;
-        if (!t0)
-            t0 = now;
-        if (now - t0 > 2000000) {
-            g_printerr("pipeline layar kedua: %.1f fps dikirim ke encoder (%s)\n",
-                       n / ((now - t0) / 1e6), gst_flow_get_name(ret));
-            n = 0;
-            t0 = now;
-        }
-    }
-    gst_buffer_unref(out);
+    feed_send(src, out, fps);
     gst_object_unref(src);
 }
 
@@ -588,23 +603,36 @@ static void feed_request(void)
         feed_push();
 }
 
-/* Layar bisa diam sama sekali dan kursor tidak bergerak. Frame terakhir tetap
- * dikirim ulang sepuluh kali sedetik: selain menjaga aliran tetap hidup, encoder
- * jadi terus memperhalus gambar diam itu sehingga tidak tertinggal buram setelah
- * keyframe. */
+/* Layar bisa diam sama sekali dan kursor tidak bergerak, tetapi alirannya tidak
+ * boleh ikut melambat: laju yang turun membuat gerakan berikutnya terasa patah,
+ * dan encoder berhenti memperhalus gambar diam sehingga sisa keyframe terakhir
+ * tertinggal buram. Frame terakhir yang sudah jadi dikirim ulang apa adanya,
+ * tanpa disalin lagi, jadi menjaga laju penuh nyaris tidak memakan tenaga. */
 static gboolean feed_keepalive(gpointer data)
 {
     g_mutex_lock(&feed.lock);
-    gboolean stale = feed.src && feed.bg && g_get_monotonic_time() - feed.last_push > 90000;
+    gint64 gap = G_USEC_PER_SEC / MAX(feed.fps, 1);
+    GstBuffer *again = NULL;
+    GstElement *src = NULL;
+    int fps = feed.fps;
+    if (feed.src && feed.last && g_get_monotonic_time() - feed.last_push > gap - 2000) {
+        again = gst_buffer_copy(feed.last);
+        src = gst_object_ref(feed.src);
+        feed.last_push = g_get_monotonic_time();
+    }
     g_mutex_unlock(&feed.lock);
-    if (stale)
-        feed_push();
+
+    if (again) {
+        feed_send(src, again, fps);
+        gst_object_unref(src);
+    }
     return G_SOURCE_CONTINUE;
 }
 
 /* Datang dari thread PipeWire. */
 static void on_capture(const PwcapUpdate *u, gpointer user)
 {
+    gboolean changed = FALSE;
     g_mutex_lock(&feed.lock);
     if (u->pixels && u->width > 0 && u->height > 0 && u->stride > 0) {
         /* Disalin rapat selebar gambar: stride dari PipeWire bisa berbeda
@@ -625,6 +653,7 @@ static void on_capture(const PwcapUpdate *u, gpointer user)
         feed.width = u->width;
         feed.height = u->height;
         feed.stride = stride;
+        changed = TRUE;
     }
     if (u->cursor && u->cursor_w > 0 && u->cursor_h > 0) {
         gsize need = (gsize) u->cursor_w * u->cursor_h * 4;
@@ -632,17 +661,26 @@ static void on_capture(const PwcapUpdate *u, gpointer user)
         feed.cursor = g_memdup2(u->cursor, need);
         feed.cursor_w = u->cursor_w;
         feed.cursor_h = u->cursor_h;
+        changed = TRUE;
     }
     if (u->cursor_meta) {
         /* Kursor hilang dari gambar begitu penunjuk pindah ke layar lain. */
+        if (feed.cursor_valid != u->cursor_valid)
+            changed = TRUE;
         feed.cursor_valid = u->cursor_valid;
-        if (u->cursor_valid) {
+        if (u->cursor_valid && (feed.x != u->cursor_x || feed.y != u->cursor_y)) {
             feed.x = u->cursor_x;
             feed.y = u->cursor_y;
+            changed = TRUE;
         }
     }
     g_mutex_unlock(&feed.lock);
-    feed_request();
+
+    /* Mutter juga mengabarkan kursor yang bergerak di layar lain. Tanpa
+     * penyaringan ini, frame yang isinya sama persis disalin ulang enam puluh
+     * kali sedetik hanya karena penunjuk digerakkan di layar laptop. */
+    if (changed)
+        feed_request();
 }
 
 static void feed_clear(void)
@@ -666,6 +704,7 @@ static void feed_clear(void)
     g_mutex_lock(&feed.lock);
     g_clear_pointer(&feed.bg, g_free);
     g_clear_pointer(&feed.cursor, g_free);
+    gst_buffer_replace(&feed.last, NULL);
     feed.bg_size = 0;
     feed.cursor_valid = FALSE;
     g_mutex_unlock(&feed.lock);
@@ -737,7 +776,8 @@ gboolean share_start(App *app, GError **error)
     /* queue leaky: kalau encoder sibuk, frame lama dibuang, bukan ditumpuk (anti-lag). */
     char *desc = g_strdup_printf(
         "%s ! identity name=cap silent=true ! queue max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream ! %s ! "
-        "video/x-h264,profile=constrained-baseline,stream-format=byte-stream ! "
+        "video/x-h264,profile=(string){ constrained-baseline, baseline },"
+        "stream-format=byte-stream ! "
         "h264parse config-interval=-1 ! "
         "rtph264pay name=pay config-interval=-1 aggregate-mode=zero-latency mtu=1200 ! "
         "application/x-rtp,media=video,encoding-name=H264,payload=96 ! "
@@ -864,7 +904,7 @@ gboolean share_start(App *app, GError **error)
         }
         g_mutex_lock(&feed.lock);
         feed.cap = cap;
-        feed.keepalive = g_timeout_add(100, feed_keepalive, NULL);
+        feed.keepalive = g_timeout_add(MAX(1000 / MAX(app->fps, 1), 4), feed_keepalive, NULL);
         g_mutex_unlock(&feed.lock);
 
         /* Monitor virtual baru dibuat Mutter setelah aliran dinegosiasikan,

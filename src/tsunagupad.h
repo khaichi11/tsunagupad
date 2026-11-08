@@ -89,6 +89,7 @@ void idle_inhibit_set(gboolean on);
 const char *encoder_pick(const char *wanted);
 char *encoder_fragment(const char *name, int w, int h, int fps, int kbps, int max_kbps);
 gboolean encoder_can_retune(const char *name);
+int encoder_bitrate_unit(const char *name);
 
 /* playout.c */
 void playout_delay_attach(GstElement *payloader);

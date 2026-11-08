@@ -60,10 +60,11 @@ VA-API encoders read the frames as DMA-BUF without a copy through the CPU.
 While an iPad is connected, the automatic screen lock is held off, because GNOME
 refuses new screen sharing sessions while the screen is locked.
 
-Latency is kept low in three ways: the encoder runs in a zero latency mode with
-one second keyframes, the bitrate adapts to packet loss reported by the iPad,
-and the stream asks the receiver to display each frame as soon as it is decoded
-instead of buffering it.
+Latency is kept low in three ways: the encoder runs in a zero latency mode and
+sends a keyframe only every ten seconds or when the iPad asks for one, the
+bitrate adapts to packet loss reported by the iPad, and the stream asks the
+receiver to display each frame as soon as it is decoded instead of buffering
+it.
 
 ## Requirements
 
@@ -71,8 +72,8 @@ instead of buffering it.
 - An Ubuntu on Xorg or a Wayland session. Both work; GNOME 50 (Ubuntu 26.04) is
   Wayland only.
 - An iPad with Safari. No app and no jailbreak needed.
-- Optional: an NVIDIA or Intel GPU for hardware encoding. Software encoding
-  works as a fallback.
+- Optional: an NVIDIA or Intel GPU for hardware encoding. On NVIDIA Jetson the
+  Tegra encoder is used. Software encoding works as a fallback.
 
 ## Install
 
@@ -160,6 +161,27 @@ be exposed to the internet. Expect more latency than on a local network,
 especially when Tailscale cannot reach a direct connection and falls back to a
 relay. The AirPlay direction does not work over Tailscale, because iPadOS looks
 for the receiver on the local network.
+
+### On a Jetson or another machine without a screen
+
+The second screen works the same on an NVIDIA Jetson: the virtual monitor comes
+from the compositor, not from a graphics card output, so no display has to be
+plugged in. The Tegra encoder is picked automatically when it is present, and
+the virtual monitor becomes the primary one when nothing else is attached.
+
+What it does need is a running GNOME Wayland session on the Jetson. With no
+display attached, a session usually does not start on its own. Either enable
+automatic login and leave a cheap HDMI dummy plug in the port, or start a
+headless GNOME session with GNOME Remote Desktop, then run the command inside
+that session:
+
+```bash
+tsunagupad share --second 1280x800
+```
+
+This path has not been tested on Jetson hardware here. If the encoder is not
+found, `--encoder cpu` still works, and `TSUNAGUPAD_DEBUG=1` prints which
+encoders were tried.
 
 ## Quality and latency
 

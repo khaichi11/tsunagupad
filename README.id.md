@@ -60,10 +60,11 @@ dan encoder Intel VA-API membaca frame sebagai DMA-BUF tanpa salinan lewat CPU.
 Selama iPad tersambung, penguncian layar otomatis ditahan, karena GNOME menolak
 sesi berbagi layar baru selama layar terkunci.
 
-Latensi ditekan dengan tiga cara: encoder berjalan pada mode tanpa penundaan
-dengan keyframe setiap satu detik, bitrate menyesuaikan diri terhadap paket yang
-hilang menurut laporan iPad, dan penerima diminta menampilkan setiap frame
-begitu selesai didekode alih-alih menyimpannya di buffer.
+Latensi ditekan dengan tiga cara: encoder berjalan pada mode tanpa penundaan dan
+hanya mengirim keyframe sepuluh detik sekali atau saat iPad memintanya, bitrate
+menyesuaikan diri terhadap paket yang hilang menurut laporan iPad, dan penerima
+diminta menampilkan setiap frame begitu selesai didekode alih-alih menyimpannya
+di buffer.
 
 ## Kebutuhan
 
@@ -71,8 +72,9 @@ begitu selesai didekode alih-alih menyimpannya di buffer.
 - Sesi Ubuntu on Xorg atau Wayland. Keduanya bisa; GNOME 50 (Ubuntu 26.04) hanya
   Wayland.
 - iPad dengan Safari. Tidak perlu aplikasi dan tidak perlu jailbreak.
-- Opsional: GPU NVIDIA atau Intel untuk encoding perangkat keras. Encoding
-  perangkat lunak tersedia sebagai cadangan.
+- Opsional: GPU NVIDIA atau Intel untuk encoding perangkat keras. Di NVIDIA
+  Jetson dipakai encoder Tegra. Encoding perangkat lunak tersedia sebagai
+  cadangan.
 
 ## Pemasangan
 
@@ -160,6 +162,27 @@ yang perlu dibuka ke internet. Latensinya lebih tinggi daripada jaringan lokal,
 terutama bila Tailscale tidak mendapat sambungan langsung dan memakai relay.
 Arah AirPlay tidak bisa lewat Tailscale, karena iPadOS mencari penerima di
 jaringan lokal.
+
+### Di Jetson atau mesin lain tanpa layar
+
+Layar kedua bekerja sama saja di NVIDIA Jetson: monitor virtualnya datang dari
+kompositor, bukan dari keluaran kartu grafis, jadi tidak perlu ada layar yang
+tercolok. Encoder Tegra dipilih otomatis kalau tersedia, dan monitor virtual itu
+menjadi monitor utama bila memang tidak ada layar lain.
+
+Yang tetap dibutuhkan adalah sesi Wayland GNOME yang berjalan di Jetson-nya.
+Tanpa layar tercolok, sesi biasanya tidak mau jalan sendiri. Pilihannya: nyalakan
+login otomatis lalu biarkan dummy HDMI murah tertancap di portnya, atau jalankan
+sesi GNOME headless lewat GNOME Remote Desktop, kemudian jalankan perintahnya di
+dalam sesi itu:
+
+```bash
+tsunagupad share --second 1280x800
+```
+
+Jalur ini belum diuji di perangkat Jetson sungguhan. Kalau encoder-nya tidak
+ketemu, `--encoder cpu` tetap bisa dipakai, dan `TSUNAGUPAD_DEBUG=1` menampilkan
+encoder apa saja yang sudah dicoba.
 
 ## Kualitas dan latensi
 
