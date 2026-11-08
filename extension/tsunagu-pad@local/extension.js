@@ -712,6 +712,8 @@ class TsunaguPadToggle extends QuickMenuToggle {
     }
 
     _onExit(daemon) {
+        if (this._destroyed)
+            return;
         if (this._daemon !== daemon)
             return;
         const kind = this._daemonKind;
@@ -739,6 +741,8 @@ class TsunaguPadToggle extends QuickMenuToggle {
     }
 
     _onLine(daemon, kind, line) {
+        if (this._destroyed)
+            return;
         if (this._daemon !== daemon)
             return;
 
@@ -844,6 +848,10 @@ class TsunaguPadToggle extends QuickMenuToggle {
     /* ---------- hotspot ---------- */
 
     _syncHotspot() {
+        /* Pekerjaan tak serempak bisa selesai setelah panel dibongkar; menyentuh
+           widget yang sudah dibuang membuat GNOME Shell membanjiri log. */
+        if (this._destroyed)
+            return;
         this._hotspotSwitch.label.text = this._hotspotStatus || 'Hotspot langsung';
         this._hotspotSwitch.setSensitive(!this._hotspotBusy);
         if (!this._hotspotBusy)
