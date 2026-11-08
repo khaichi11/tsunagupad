@@ -324,10 +324,23 @@ let penLastUse = 0;
 const penDot = $('pen-dot');
 let lastPointer = null;   // posisi layar terakhir, dipakai tombol klik di bar
 
-function movePenDot(e) {
-  lastPointer = { x: e.clientX, y: e.clientY };
-  penDot.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
+/* Penunjuk digambar di iPad, bukan diambil dari video. Di layar kedua kursor
+   sistem sengaja tidak ikut dikirim, karena kompositor tidak menggambar ulang
+   saat kursor saja yang bergerak, sehingga kursor dari video tampak tersendat. */
+let dotTimer = 0;
+
+function showDot(x, y, hold) {
+  lastPointer = { x, y };
+  penDot.style.transform = `translate(${x}px, ${y}px)`;
   penDot.hidden = false;
+  clearTimeout(dotTimer);
+  /* Di layar kedua penunjuk menetap seperti kursor monitor biasa. */
+  if (hold && !info?.second)
+    dotTimer = setTimeout(() => { penDot.hidden = true; }, hold);
+}
+
+function movePenDot(e) {
+  showDot(e.clientX, e.clientY, 0);
 }
 
 function sendPen(kind, events) {
@@ -337,7 +350,7 @@ function sendPen(kind, events) {
   });
   send({ type: 'pen', e: kind, pts });
   penLastUse = performance.now();
-  if (kind === 'leave') penDot.hidden = true;
+  if (kind === 'leave' && !info?.second) penDot.hidden = true;
   else if (events.length) movePenDot(events[events.length - 1]);
 }
 
@@ -346,7 +359,7 @@ function sendPen(kind, events) {
 const BUTTONS = { 0: 1, 1: 2, 2: 3 };
 
 function sendMouseAt(kind, clientX, clientY, button) {
-  lastPointer = { x: clientX, y: clientY };
+  showDot(clientX, clientY, kind === 'up' || kind === 'click' ? 1200 : 0);
   const [x, y] = norm(clientX, clientY);
   const msg = { type: 'mouse', e: kind, x, y };
   if (button) msg.b = button;

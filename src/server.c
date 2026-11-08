@@ -187,6 +187,8 @@ static void handle_hello(Client *c, JsonObject *o)
     json_builder_add_string_value(b, app->enc_name);
     json_builder_set_member_name(b, "input");
     json_builder_add_boolean_value(b, app->input != NULL);
+    json_builder_set_member_name(b, "second");
+    json_builder_add_boolean_value(b, app->virtmon != NULL);
     json_builder_set_member_name(b, "version");
     json_builder_add_string_value(b, TSUNAGUPAD_VERSION);
     json_builder_end_object(b);

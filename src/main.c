@@ -313,7 +313,7 @@ static int cmd_share(int argc, char **argv)
 {
     App app = { 0 };
     int port = 8765;
-    char *region = NULL, *second = NULL, *web_dir = NULL;
+    char *region = NULL, *second = NULL, *cursor = NULL, *web_dir = NULL;
     gboolean no_input = FALSE, reset_token = FALSE;
     app.quality = "lancar";
     app.encoder = "auto";
@@ -323,6 +323,7 @@ static int cmd_share(int argc, char **argv)
     GOptionEntry entries[] = {
         { "port", 'p', 0, G_OPTION_ARG_INT, &port, "Port HTTP (bawaan 8765)", "PORT" },
         { "region", 'r', 0, G_OPTION_ARG_STRING, &region, "Area layar yang dibagikan", "X,Y,W,H" },
+        { "cursor", 0, 0, G_OPTION_ARG_STRING, &cursor, "Kursor layar kedua: lokal (bawaan) | sistem", "MODE" },
         { "second", 0, 0, G_OPTION_ARG_STRING, &second, "iPad jadi layar kedua, mis. 1280x800 (Wayland)", "WxH" },
         { "quality", 'q', 0, G_OPTION_ARG_STRING, &app.quality, "hemat | lancar | seimbang | tajam", "Q" },
         { "encoder", 'e', 0, G_OPTION_ARG_STRING, &app.encoder, "auto | nvidia | intel-lp | intel | cpu", "ENC" },
@@ -377,7 +378,11 @@ static int cmd_share(int argc, char **argv)
             if (sscanf(second, "%dx%d", &vw, &vh) != 2 || vw < 320 || vh < 240)
                 return fail("Format --second harus LEBARxTINGGI, mis. 1280x800");
             GError *verr = NULL;
-            app.virtmon = virtmon_open(vw & ~1, vh & ~1, FALSE, &verr);
+            /* Kursor sistem tidak ikut: di monitor virtual, gerakan kursor tidak
+             * membuat kompositor menggambar ulang, jadi kursor dari video hanya
+             * terbarui dua kali per detik. iPad menggambar penunjuknya sendiri. */
+            app.virtmon = virtmon_open(vw & ~1, vh & ~1,
+                                       g_strcmp0(cursor, "sistem") != 0, &verr);
             if (!app.virtmon)
                 return fail(verr ? verr->message : "Monitor virtual gagal dibuat");
             virtmon_size(app.virtmon, &app.rw, &app.rh);
