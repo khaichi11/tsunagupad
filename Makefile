@@ -6,6 +6,8 @@ BINDIR   ?= $(PREFIX)/bin
 DATADIR  ?= $(PREFIX)/share/tsunagupad
 EXT_UUID := tsunagu-pad@local
 EXT_DIR  ?= $(HOME)/.local/share/gnome-shell/extensions/$(EXT_UUID)
+USER_UNIT_DIR ?= $(HOME)/.config/systemd/user
+AUTOSTART_UNIT := tsunagupad-share.service
 
 PKGS     := gstreamer-1.0 gstreamer-rtp-1.0 libpipewire-0.3 libsoup-3.0 json-glib-1.0 gio-unix-2.0 libqrencode x11 xtst
 CFLAGS   ?= -O2 -g
@@ -36,11 +38,31 @@ install: all
 	install -d "$(DESTDIR)$(EXT_DIR)"
 	cp -r extension/$(EXT_UUID)/. "$(DESTDIR)$(EXT_DIR)/"
 
-uninstall:
+autostart:
+	install -d "$(USER_UNIT_DIR)"
+	sed 's|@BINDIR@|$(BINDIR)|g' system/$(AUTOSTART_UNIT) > "$(USER_UNIT_DIR)/$(AUTOSTART_UNIT)"
+	systemctl --user daemon-reload
+	systemctl --user enable $(AUTOSTART_UNIT)
+
+no-autostart:
+	-systemctl --user disable --now $(AUTOSTART_UNIT)
+	rm -f "$(USER_UNIT_DIR)/$(AUTOSTART_UNIT)"
+	-systemctl --user daemon-reload
+
+# Login dari iPad tanpa monitor. Jalankan di terminal sesi grafis dengan monitor tercolok.
+login-setup: autostart
+	sudo system/tsunagupad-login-setup enable "$(USER)" "$(DISPLAY)" "$(XAUTHORITY)"
+	-gsettings reset org.gnome.desktop.screensaver lock-enabled
+	-gsettings reset org.gnome.desktop.session idle-delay
+
+login-undo:
+	sudo system/tsunagupad-login-setup disable
+
+uninstall: no-autostart
 	rm -f "$(BINDIR)/tsunagupad"
 	rm -rf "$(DATADIR)" "$(EXT_DIR)"
 
 clean:
 	rm -rf build
 
-.PHONY: all install uninstall clean
+.PHONY: all install autostart no-autostart login-setup login-undo uninstall clean

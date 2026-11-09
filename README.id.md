@@ -218,10 +218,27 @@ Jalur ini belum diuji di perangkat Jetson sungguhan. Kalau encoder-nya tidak
 ketemu, `--encoder cpu` tetap bisa dipakai, dan `TSUNAGUPAD_DEBUG=1` menampilkan
 encoder apa saja yang sudah dicoba.
 
+Kalau iPad dipakai sebagai pengganti monitor, sesi Xorg juga cukup, dan dummy
+plug tidak diperlukan. Saat monitor masih tercolok, jalankan `make login-setup`
+dari terminal di desktop: Xorg akan selalu punya layar 1080p memakai EDID monitor
+itu, dan layar login GDM ikut tampil di iPad sehingga password diketik dari sana.
+QR tidak akan terlihat tanpa layar, jadi simpan dulu alamatnya di Layar Utama
+iPad. Sakelar **iPad aktif di sesi berikutnya** di panel menentukan apakah ini
+menyala saat login berikutnya, dan `make login-undo` mengembalikan semuanya.
+
+Input dari iPad, termasuk password itu, lewat WebSocket tanpa enkripsi aplikasi.
+Pakai jaringan milik sendiri dengan sandi Wi-Fi yang kuat.
+
+Pilihan yang tidak bisa dipakai disembunyikan otomatis: `tsunagupad capabilities`
+menampilkan model mesin dan hasil deteksinya. Hotspot hanya muncul kalau chip
+Wi-Fi bisa menjadi titik akses sambil tetap tersambung, dan encoder dipilih
+dengan mencobanya satu per satu di mesin itu.
+
 ## Kualitas dan latensi
 
-Tersedia empat pilihan, dari lebar 960 piksel pada 30 frame per detik sampai
-resolusi asli pada 60 frame per detik. Bitrate dimulai sekitar 6 Mbit/s, naik
+Tersedia lima pilihan, dari lebar 960 piksel pada 30 frame per detik sampai
+resolusi asli pada 60 frame per detik. Pilihan `monitor` (sampai 1920 piksel, 30 frame
+per detik) ditujukan untuk mesin tanpa encoder perangkat keras. Bitrate dimulai sekitar 6 Mbit/s, naik
 selama jaringan lega, dan turun cepat saat ada paket hilang, sehingga pilihan
 paling tajam butuh beberapa detik untuk mencapai kualitas penuh.
 

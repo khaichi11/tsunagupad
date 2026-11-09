@@ -34,6 +34,7 @@ static const struct {
     { "lancar", 1280, 60, 5000 },    /* bawaan: responsif untuk Wi-Fi/Tailscale */
     { "seimbang", 1600, 60, 8000 },
     { "tajam", 0, 60, 14000 },       /* resolusi asli */
+    { "monitor", 1920, 30, 12000 },  /* pengganti monitor: 1080p tanpa skala agar tulisan tajam */
 };
 
 void tsunagu_event(const char *event, ...)
@@ -291,6 +292,34 @@ static gboolean on_quit_signal(gpointer loop)
     return G_SOURCE_CONTINUE;
 }
 
+/* Area tangkap dihitung sekali saat mulai. Kalau ukuran layar X berubah,
+ * misalnya monitor baru dicolok setelah sesi berjalan, area lama membuat iPad
+ * hanya menampilkan pojok layar. Proses keluar dengan kode gagal supaya
+ * systemd menyalakannya lagi dengan ukuran yang benar. */
+typedef struct {
+    Display *dpy;
+    Window root;
+    int width, height;
+    gboolean changed;
+    GMainLoop *loop;
+} ScreenWatch;
+
+static gboolean screen_watch_tick(gpointer data)
+{
+    ScreenWatch *w = data;
+    while (XPending(w->dpy)) {
+        XEvent ev;
+        XNextEvent(w->dpy, &ev);
+        if (ev.type == ConfigureNotify && ev.xconfigure.window == w->root &&
+            (ev.xconfigure.width != w->width || ev.xconfigure.height != w->height)) {
+            w->changed = TRUE;
+            g_main_loop_quit(w->loop);
+            return G_SOURCE_REMOVE;
+        }
+    }
+    return G_SOURCE_CONTINUE;
+}
+
 static int fail(const char *message)
 {
     tsunagu_event("error", "message", message, NULL);
@@ -313,6 +342,7 @@ static int cmd_share(int argc, char **argv)
 {
     App app = { 0 };
     int port = 8765;
+    static ScreenWatch screen_watch;
     char *region = NULL, *second = NULL, *cursor = NULL, *web_dir = NULL, *scale = NULL;
     gboolean no_input = FALSE, reset_token = FALSE;
     app.quality = "lancar";
@@ -326,8 +356,8 @@ static int cmd_share(int argc, char **argv)
         { "cursor", 0, 0, G_OPTION_ARG_STRING, &cursor, "Kursor layar kedua: sistem (bawaan) | lokal", "MODE" },
         { "scale", 0, 0, G_OPTION_ARG_STRING, &scale, "Skala layar kedua: 1 (bawaan), 1.25, 1.5, 2, atau ikut", "S" },
         { "second", 0, 0, G_OPTION_ARG_STRING, &second, "iPad jadi layar kedua, mis. 1280x800 (Wayland)", "WxH" },
-        { "quality", 'q', 0, G_OPTION_ARG_STRING, &app.quality, "hemat | lancar | seimbang | tajam", "Q" },
-        { "encoder", 'e', 0, G_OPTION_ARG_STRING, &app.encoder, "auto | nvidia | intel-lp | intel | cpu", "ENC" },
+        { "quality", 'q', 0, G_OPTION_ARG_STRING, &app.quality, "hemat | lancar | seimbang | tajam | monitor", "Q" },
+        { "encoder", 'e', 0, G_OPTION_ARG_STRING, &app.encoder, "auto | nvidia | intel-lp | intel | tegra | vic-x264 | cpu", "ENC" },
         { "pen", 0, 0, G_OPTION_ARG_STRING, &app.pen_mode, "Apple Pencil: auto | tablet | mouse", "MODE" },
         { "backend", 0, 0, G_OPTION_ARG_STRING, &app.backend, "Tangkap layar: auto | x11 | portal (Wayland)", "B" },
         { "no-input", 0, 0, G_OPTION_ARG_NONE, &no_input, "iPad hanya menonton, tanpa kontrol", NULL },
@@ -354,7 +384,7 @@ static int cmd_share(int argc, char **argv)
         if (g_str_equal(presets[i].name, app.quality))
             preset = i;
     if (preset < 0)
-        return fail("Kualitas tidak dikenal (pilih hemat, lancar, seimbang, atau tajam)");
+        return fail("Kualitas tidak dikenal (pilih hemat, lancar, seimbang, tajam, atau monitor)");
 
     if (!g_str_equal(app.backend, "auto") && !g_str_equal(app.backend, "x11") && !g_str_equal(app.backend, "portal"))
         return fail("Backend tidak dikenal (pilih auto, x11, atau portal)");
@@ -435,7 +465,11 @@ static int cmd_share(int argc, char **argv)
             return fail("Tidak bisa membuka display X11. Tsunagu-Pad saat ini butuh sesi \"Ubuntu on Xorg\".");
         app.rw = DisplayWidth(dpy, DefaultScreen(dpy));
         app.rh = DisplayHeight(dpy, DefaultScreen(dpy));
-        XCloseDisplay(dpy);
+        screen_watch.dpy = dpy;
+        screen_watch.root = DefaultRootWindow(dpy);
+        screen_watch.width = app.rw;
+        screen_watch.height = app.rh;
+        XSelectInput(dpy, screen_watch.root, StructureNotifyMask);
     }
 
     app.fps = presets[preset].fps;
@@ -484,10 +518,16 @@ static int cmd_share(int argc, char **argv)
 
     g_unix_signal_add(SIGINT, on_quit_signal, app.loop);
     g_unix_signal_add(SIGTERM, on_quit_signal, app.loop);
+    if (screen_watch.dpy) {
+        screen_watch.loop = app.loop;
+        g_timeout_add(1000, screen_watch_tick, &screen_watch);
+    }
     g_main_loop_run(app.loop);
 
     server_stop(&app);
     share_stop(&app);
+    if (screen_watch.dpy)
+        XCloseDisplay(screen_watch.dpy);
     input_free(app.input);
     virtmon_close(app.virtmon);
     portal_free(app.portal);
@@ -500,6 +540,10 @@ static int cmd_share(int argc, char **argv)
     g_free(fps);
     g_free(app.token);
     g_free(app.web_dir);
+    if (screen_watch.changed) {
+        g_printerr("tsunagupad: ukuran layar berubah, perlu dinyalakan ulang\n");
+        return 3;
+    }
     return 0;
 }
 
@@ -574,6 +618,16 @@ static int cmd_receive(int argc, char **argv)
     tsunagu_event("receiver", "state", "starting", "name", name, NULL);
     execv(args->pdata[0], (char **) args->pdata);
     return fail(g_strerror(errno));
+}
+
+/* Cepat dan tanpa uji encoder: dipanggil panel setiap kali dimuat. */
+static int cmd_capabilities(void)
+{
+    char *model = caps_model();
+    tsunagu_event("capabilities", "model", model, "jetson", caps_is_jetson() ? "yes" : "no",
+                  "hotspot", caps_hotspot(), "pencil", caps_has_uinput() ? "tablet" : "mouse", NULL);
+    g_free(model);
+    return 0;
 }
 
 static int cmd_probe(void)
@@ -836,6 +890,7 @@ static void usage(void)
             "  tsunagupad on | off | status\n"
             "  tsunagupad hotspot on|off\n"
             "  tsunagupad probe\n"
+            "  tsunagupad capabilities\n"
             "  tsunagupad qr TEKS\n\n"
             "Tambahkan --help setelah perintah untuk semua opsi.\n", TSUNAGUPAD_VERSION);
 }
@@ -867,6 +922,8 @@ int main(int argc, char **argv)
         return cmd_hotspot(argc > 2 ? argv[2] : "");
     if (g_str_equal(cmd, "probe"))
         return cmd_probe();
+    if (g_str_equal(cmd, "capabilities"))
+        return cmd_capabilities();
     if (g_str_equal(cmd, "qr"))
         return cmd_qr(argc - 1, argv + 1);
     if (g_str_equal(cmd, "--version") || g_str_equal(cmd, "version")) {

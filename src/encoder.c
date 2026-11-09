@@ -42,6 +42,14 @@ static const Encoder encoders[] = {
       "nvv4l2h264enc name=enc control-rate=1 bitrate=%d iframeinterval=%d "
       "profile=0 preset-level=1 insert-sps-pps=true maxperf-enable=true",
       TRUE, TRUE },
+    /* Jetson tanpa NVENC: konversi dan skala di VIC, hanya x264 yang memakai CPU.
+     * Terukur di Orin Nano pada 1280x720@30: 0,5 core, sedangkan jalur "cpu" 0,9. */
+    { "vic-x264",
+      /* Bawaan nvvidconv adalah Nearest, yang membuat tulisan hancur saat diskala. */
+      "nvvidconv interpolation-method=2 ! video/x-raw,format=I420,width=%d,height=%d ! "
+      "x264enc name=enc tune=zerolatency speed-preset=ultrafast bitrate=%d key-int-max=%d bframes=0 "
+      "vbv-buf-capacity=350 threads=4 sliced-threads=true",
+      TRUE },
     { "cpu",
       "videoconvertscale n-threads=4 ! video/x-raw,format=I420,width=%d,height=%d ! "
       "x264enc name=enc tune=zerolatency speed-preset=ultrafast bitrate=%d key-int-max=%d bframes=0 "

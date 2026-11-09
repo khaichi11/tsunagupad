@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 gnome-extensions disable tsunagu-pad@local 2>/dev/null || true
+sudo system/tsunagupad-login-setup disable || true
 make uninstall
 
 sudo systemctl stop tsunagupad-hotspot.service 2>/dev/null || true

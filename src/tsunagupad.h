@@ -40,7 +40,7 @@ typedef struct {
     char *backend;              /* auto | x11 | portal */
     Portal *portal;             /* sesi Wayland (xdg-desktop-portal); NULL di sesi X11 */
     Virtmon *virtmon;           /* layar kedua lewat monitor virtual Mutter */
-    char *quality;              /* hemat | lancar | seimbang | tajam */
+    char *quality;              /* hemat | lancar | seimbang | tajam | monitor */
     char *encoder;              /* auto | nvidia | intel | cpu */
     char *pen_mode;             /* auto | tablet | mouse */
     gboolean allow_input;
@@ -132,3 +132,10 @@ void input_release_all(Input *in);
 
 /* qr.c */
 char *qr_rows(const char *text);
+
+/* caps.c: mengenali kemampuan mesin ini */
+gboolean caps_concurrent_ap(const char *iw_output);
+const char *caps_hotspot(void);     /* yes | no | unknown */
+char *caps_model(void);
+gboolean caps_is_jetson(void);
+gboolean caps_has_uinput(void);

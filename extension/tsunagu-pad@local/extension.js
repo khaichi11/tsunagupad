@@ -36,7 +36,10 @@ const QUALITIES = [
     ['lancar', 'Lancar', '720p, paling responsif'],
     ['seimbang', 'Seimbang', '1600 px, jernih dan tetap lancar'],
     ['tajam', 'Tajam', 'Resolusi asli layar'],
+    ['monitor', 'Monitor', 'Sampai 1080p, 30 fps, tulisan tajam'],
 ];
+const BOOT_FLAG = '/var/lib/tsunagupad/enabled';
+const SHARE_SERVICE = 'tsunagupad-share.service';
 const CONFIG_PATH = GLib.build_filenamev([GLib.get_user_config_dir(), 'tsunagupad', 'panel.json']);
 
 function loadConfig() {
@@ -351,6 +354,7 @@ class TsunaguPadToggle extends QuickMenuToggle {
         this._outputs = [];
         this._shareOutput = null;
         this._hotspotActive = false;
+        this._hotspotSupported = true;
         this._hotspotBusy = false;
         this._hotspotStatus = '';
         this._hotspotQrText = null;
@@ -368,6 +372,8 @@ class TsunaguPadToggle extends QuickMenuToggle {
                 return;
             if (this._daemon)
                 this._stopDaemon().catch(e => this._notify(e.message));
+            else if (this._serviceActive)
+                this._stopService().catch(e => this._notify(e.message));
             else
                 this._start().catch(e => this._notify(e.message));
         });
@@ -383,10 +389,12 @@ class TsunaguPadToggle extends QuickMenuToggle {
         this._pollId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 5, () => {
             if (this._hotspotActive || this.menu.isOpen)
                 this._refreshHotspot().catch(() => {});
+            this._refreshService().catch(() => {});
             return GLib.SOURCE_CONTINUE;
         });
 
         this._sync();
+        this._refreshService().catch(() => {});
         this._detectState().catch(e => console.warn(`Tsunagu-Pad: ${e.message}`));
     }
 
@@ -472,6 +480,23 @@ class TsunaguPadToggle extends QuickMenuToggle {
         this._qualityCaptionItem = this._rowItem(this._qualityCaption);
         this.menu.addMenuItem(this._qualityCaptionItem);
 
+        /* Berkas penanda dibaca layar login dan service saat sesi berikutnya mulai. */
+        this._bootSwitch = new PopupMenu.PopupSwitchMenuItem(
+            'iPad aktif di sesi berikutnya', GLib.file_test(BOOT_FLAG, GLib.FileTest.EXISTS));
+        this._bootSwitch.visible = GLib.file_test(GLib.path_get_dirname(BOOT_FLAG), GLib.FileTest.IS_DIR);
+        this._bootSwitch.connect('toggled', (item, state) => {
+            try {
+                if (state)
+                    GLib.file_set_contents(BOOT_FLAG, '');
+                else
+                    Gio.File.new_for_path(BOOT_FLAG).delete(null);
+            } catch (e) {
+                item.setToggleState(!state);
+                this._notify(e.message);
+            }
+        });
+        this.menu.addMenuItem(this._bootSwitch);
+
         this._fullscreenSwitch = new PopupMenu.PopupSwitchMenuItem('Layar penuh', this._config.fullscreen);
         this._fullscreenSwitch.connect('toggled', (item, state) => {
             this._config.fullscreen = state;
@@ -504,7 +529,8 @@ class TsunaguPadToggle extends QuickMenuToggle {
         this.menu.addMenuItem(this._copyItem);
 
         /* Hotspot hostapd di AP virtual; Wi-Fi utama tetap tersambung. */
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this._hotspotSeparator = new PopupMenu.PopupSeparatorMenuItem();
+        this.menu.addMenuItem(this._hotspotSeparator);
         this._hotspotSwitch = new PopupMenu.PopupSwitchMenuItem('', false);
         this._hotspotSwitch.connect('toggled', (item, state) => {
             this._setHotspot(state).catch(e => this._notify(`Hotspot gagal: ${e.message}`));
@@ -586,21 +612,42 @@ class TsunaguPadToggle extends QuickMenuToggle {
     _setQuality(id) {
         this._config.quality = id;
         saveConfig(this._config);
-        if (this._daemonKind === 'share')
+        /* Panel mengambil alih service: program baru menghentikan yang lama sendiri. */
+        if (this._daemonKind === 'share' || this._serviceActive) {
+            this._serviceActive = false;
             this._restart().catch(e => this._notify(e.message));
+        }
         this._sync();
+    }
+
+    /* Berbagi layar bisa berjalan dari service login, di luar kendali panel. */
+    async _refreshService() {
+        const res = await run(['systemctl', '--user', 'is-active', SHARE_SERVICE]);
+        if (this._destroyed || this._serviceActive === res.ok)
+            return;
+        this._serviceActive = res.ok;
+        this._sync();
+    }
+
+    async _stopService() {
+        this._serviceActive = false;
+        this._sync();
+        await run(['systemctl', '--user', 'stop', SHARE_SERVICE]);
     }
 
     _sync() {
         if (this._destroyed)
             return;
-        const running = !!this._daemon;
+        const service = this._serviceActive && !this._daemon;
+        const running = !!this._daemon || service;
         const mode = this._config.mode;
         const share = mode === 'share';
 
         this.checked = running;
         if (this._starting)
             this.subtitle = 'Menyiapkan…';
+        else if (service)
+            this.subtitle = 'Aktif · iPad';
         else if (running)
             this.subtitle = this._status;
         else
@@ -621,7 +668,8 @@ class TsunaguPadToggle extends QuickMenuToggle {
         this._monitorMenu.visible = share && !wayland && !second;
         this._monitorValue.text = selected ? this._outputName(selected) : 'Utama';
 
-        const quality = QUALITIES.find(([id]) => id === this._config.quality) ?? QUALITIES[1];
+        const qualityId = service ? 'monitor' : this._config.quality;
+        const quality = QUALITIES.find(([id]) => id === qualityId) ?? QUALITIES[1];
         this._qualityItem.visible = share;
         this._qualityCaptionItem.visible = share;
         this._qualityControl.setSelected(quality[0]);
@@ -858,9 +906,34 @@ class TsunaguPadToggle extends QuickMenuToggle {
     }
 
     async _detectState() {
+        await this._detectCapabilities();
         await this._refreshOutputs();
         this._sync();
         await this._refreshHotspot();
+    }
+
+    async _detectCapabilities() {
+        const bin = findBinary();
+        if (!bin)
+            return;
+        const res = await run([bin, 'capabilities']);
+        let caps;
+        try {
+            caps = JSON.parse(res.stdout.trim().split('\n').pop());
+        } catch {
+            return;
+        }
+        if (this._destroyed)
+            return;
+        this._hotspotSupported = caps.hotspot !== 'no';
+        /* Sekali saja: pilihan pengguna setelah ini tidak ditimpa. */
+        if (caps.jetson === 'yes' && !this._config.jetsonDefaults) {
+            this._config.jetsonDefaults = true;
+            this._config.quality = 'monitor';
+            saveConfig(this._config);
+        }
+        this._syncHotspot();
+        this._sync();
     }
 
     /* ---------- hotspot ---------- */
@@ -870,6 +943,9 @@ class TsunaguPadToggle extends QuickMenuToggle {
            widget yang sudah dibuang membuat GNOME Shell membanjiri log. */
         if (this._destroyed)
             return;
+        const available = this._hotspotSupported || this._hotspotActive;
+        this._hotspotSeparator.visible = available;
+        this._hotspotSwitch.visible = available;
         this._hotspotSwitch.label.text = this._hotspotStatus || 'Hotspot langsung';
         this._hotspotSwitch.setSensitive(!this._hotspotBusy);
         if (!this._hotspotBusy)

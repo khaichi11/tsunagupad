@@ -461,6 +461,66 @@ static void meter_attach(GstElement *pipeline, const char *name, Meter *m)
     gst_object_unref(el);
 }
 
+/* Layar yang diam tidak perlu di-encode ulang 30 kali per detik. Frame identik
+ * dibuang sebelum sampai ke encoder, kecuali beberapa frame pertama dan satu
+ * dari tiap IDLE_EVERY: itu menjaga gambar tetap menajam, dan iPad tidak
+ * menganggap videonya macet. Kursor ikut tergambar di frame X11, jadi gerakan
+ * kursor selalu terhitung sebagai perubahan. */
+#define IDLE_SETTLE 3
+#define IDLE_EVERY  15
+
+typedef struct {
+    guint8 *prev;
+    gsize size;
+    guint same;
+} IdleSkip;
+
+static void idle_skip_free(gpointer data)
+{
+    IdleSkip *d = data;
+    g_free(d->prev);
+    g_free(d);
+}
+
+static GstPadProbeReturn idle_skip_probe(GstPad *pad, GstPadProbeInfo *info, gpointer data)
+{
+    IdleSkip *d = data;
+    GstBuffer *buf = GST_PAD_PROBE_INFO_BUFFER(info);
+    GstMapInfo map;
+    if (!buf || !gst_buffer_map(buf, &map, GST_MAP_READ))
+        return GST_PAD_PROBE_OK;
+
+    if (d->prev && d->size == map.size && memcmp(d->prev, map.data, map.size) == 0) {
+        d->same++;
+    } else {
+        if (d->size != map.size) {
+            d->prev = g_realloc(d->prev, map.size);
+            d->size = map.size;
+        }
+        memcpy(d->prev, map.data, map.size);
+        d->same = 0;
+    }
+    gst_buffer_unmap(buf, &map);
+
+    if (d->same <= IDLE_SETTLE || d->same % IDLE_EVERY == 0)
+        return GST_PAD_PROBE_OK;
+    return GST_PAD_PROBE_DROP;
+}
+
+static void idle_skip_attach(GstElement *pipeline)
+{
+    GstElement *el = gst_bin_get_by_name(GST_BIN(pipeline), "cap");
+    if (!el)
+        return;
+    GstPad *pad = gst_element_get_static_pad(el, "src");
+    if (pad) {
+        gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, idle_skip_probe,
+                          g_new0(IdleSkip, 1), idle_skip_free);
+        gst_object_unref(pad);
+    }
+    gst_object_unref(el);
+}
+
 /* ---------- layar kedua: gambar + kursor asli dari laptop ---------- */
 
 /* Monitor virtual Mutter hanya digambar ulang kalau isinya berubah, jadi
@@ -911,6 +971,10 @@ gboolean share_start(App *app, GError **error)
         meter_attach(pipeline, "cap", &meter_src);
         meter_attach(pipeline, "pay", &meter_enc);
     }
+
+    /* Hanya jalur X11: frame PipeWire bisa berupa DMA-BUF yang mahal dibaca CPU. */
+    if (!app->virtmon && !app->portal)
+        idle_skip_attach(pipeline);
 
     if (gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
         share_stop(app);

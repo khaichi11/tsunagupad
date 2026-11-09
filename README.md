@@ -216,10 +216,29 @@ This path has not been tested on Jetson hardware here. If the encoder is not
 found, `--encoder cpu` still works, and `TSUNAGUPAD_DEBUG=1` prints which
 encoders were tried.
 
+To use the iPad as a replacement monitor, an Xorg session is enough and no dummy
+plug is needed. With a monitor still plugged in, run `make login-setup` from a
+terminal on the desktop: Xorg then always has a 1080p screen using that monitor's
+EDID, and the GDM login screen also appears on the iPad, so the password is typed
+there. The QR code will not be visible without a screen, so save the address to
+the iPad Home Screen first. The **iPad aktif di sesi berikutnya** switch in the
+panel decides whether this starts at the next login, and `make login-undo`
+reverts everything.
+
+Input from the iPad, including that password, travels over a WebSocket with no
+application-level encryption. Use a network you own with a strong Wi-Fi password.
+
+Options that cannot work are hidden automatically: `tsunagupad capabilities`
+prints the machine model and what was detected. The hotspot only appears when
+the Wi-Fi chip can be an access point while staying connected, and the encoder
+is chosen by trying each one on that machine.
+
 ## Quality and latency
 
-Four presets are available, from 960 pixels wide at 30 frames per second up to
-the native resolution at 60 frames per second. The bitrate starts around
+Five presets are available, from 960 pixels wide at 30 frames per second up to
+the native resolution at 60 frames per second. The `monitor` preset (up to 1920 pixels
+wide, 30 frames per second) is meant for machines without a hardware encoder.
+The bitrate starts around
 6 Mbit/s, rises while the network is clear, and drops quickly when packets are
 lost, so the sharpest preset needs a few seconds to reach full quality.
 

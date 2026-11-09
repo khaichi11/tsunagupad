@@ -1,0 +1,19 @@
+# Tsunagu-Pad: mulai berbagi layar saat login, untuk mesin tanpa monitor.
+# Dipasang oleh `make autostart` ke ~/.config/systemd/user.
+#
+# Restart=on-failure sengaja dipakai: tombol di panel menghentikan proses ini
+# dengan SIGTERM (keluar bersih), jadi panel tetap bisa mengambil alih.
+[Unit]
+Description=Tsunagu-Pad, bagikan layar ke iPad saat login
+After=graphical-session.target
+PartOf=graphical-session.target
+# Sakelar "iPad aktif di sesi berikutnya"; berkas ini hanya ada setelah `make login-setup`.
+ConditionPathExists=/var/lib/tsunagupad/enabled
+
+[Service]
+ExecStart=@BINDIR@/tsunagupad share --quality monitor
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
