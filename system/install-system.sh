@@ -108,7 +108,8 @@ nmcli general reload conf 2>/dev/null || true
 # Konfigurasi hotspot: jangan pernah memakai kata sandi bawaan yang tercantum publik.
 conf=/etc/tsunagupad/hotspot.conf
 if [[ ! -f $conf ]] || grep -qx 'PASSWORD=IchiPad12345' "$conf"; then
-    ssid=$(sed -n 's/^SSID=//p' "$conf" 2>/dev/null | head -n1)
+    # Di pemasangan baru berkasnya belum ada; sed gagal dan pipefail tidak boleh menghentikan skrip.
+    ssid=$(sed -n 's/^SSID=//p' "$conf" 2>/dev/null | head -n1 || true)
     [[ -n $ssid ]] || ssid="TsunaguPad-$(hostname | tr -dc 'A-Za-z0-9-' | cut -c1-16)"
     password=$(od -An -N9 -tx1 /dev/urandom | tr -d ' \n')
     # Hotspot sedang mati di titik ini, jadi helper tidak ikut me-restart-nya.
