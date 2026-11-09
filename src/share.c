@@ -747,24 +747,50 @@ gboolean share_start(App *app, GError **error)
         /* Mutter hanya mengirim frame saat layar berubah. keepalive-time mengulang frame
          * terakhir supaya iPad yang baru tersambung tetap mendapat keyframe.
          * max-framerate dinegosiasikan ke mutter: layar 165 Hz tidak lagi menyalin 165
-         * frame per detik ke memori biasa (itu yang membebani gnome-shell); videorate
-         * hanya merapikan sisanya.
+         * frame per detik ke memori biasa (itu yang membebani gnome-shell).
          * Encoder VA bisa membaca DMA-BUF langsung dari GPU tanpa salinan lewat CPU.
          * Caps dengan dua pilihan membuat GStreamer memilih DMA-BUF bila rantai di
          * belakangnya menerima, dan jatuh ke memori biasa bila tidak.
          * TSUNAGUPAD_CAPTURE_CAPS menggantikan filter caps untuk pengujian. */
         const char *override = g_getenv("TSUNAGUPAD_CAPTURE_CAPS");
+        gboolean va = gst_element_factory_find("vacompositor") != NULL &&
+                      gst_element_factory_find("vapostproc") != NULL;
         char *caps;
         if (override && *override)
             caps = g_strdup(override);
-        else if (g_str_has_prefix(app->enc_name, "intel"))
+        else if (va)
             caps = g_strdup_printf("video/x-raw(memory:DMABuf),max-framerate=%d/1; "
                                    "video/x-raw,max-framerate=%d/1", app->fps, app->fps);
         else
             caps = g_strdup_printf("video/x-raw,max-framerate=%d/1", app->fps);
-        src = g_strdup_printf("pipewiresrc fd=%d path=%u do-timestamp=true keepalive-time=500 ! "
-                              "capsfilter caps=\"%s\" ! videorate drop-only=true max-rate=%d ! video/x-raw(ANY)",
-                              portal_pipewire_fd(app->portal), portal_node(app->portal), caps, app->fps);
+
+        if (va) {
+            /* Sama seperti layar kedua: pencampur VA berdetak pada laju tetap
+             * dan mengulang frame terakhir, jadi aliran tidak pernah melambat
+             * saat layar diam. Tanpa ini gerakan berikutnya terasa tersendat
+             * karena dekoder di iPad baru harus mengejar lagi.
+             *
+             * Penyekalaan ikut dikerjakan di GPU di sini. Untuk encoder NVENC
+             * hasilnya diturunkan lagi ke memori biasa, dan itu tetap jauh
+             * lebih murah daripada menyekala layar 2560x1600 dengan CPU. */
+            const char *tail = g_str_has_prefix(app->enc_name, "intel")
+                ? ""
+                : " ! vapostproc ! video/x-raw,format=NV12";
+            src = g_strdup_printf(
+                "pipewiresrc fd=%d path=%u do-timestamp=true keepalive-time=500 ! "
+                "capsfilter caps=\"%s\" ! queue max-size-buffers=1 leaky=downstream ! "
+                "vapostproc ! video/x-raw(memory:VAMemory),format=NV12,width=%d,height=%d ! "
+                "mix.sink_0 vacompositor name=mix force-live=true latency=0 ! "
+                "video/x-raw(memory:VAMemory),format=NV12,width=%d,height=%d,framerate=%d/1%s",
+                portal_pipewire_fd(app->portal), portal_node(app->portal), caps,
+                app->out_w, app->out_h, app->out_w, app->out_h, app->fps, tail);
+        } else {
+            src = g_strdup_printf(
+                "pipewiresrc fd=%d path=%u do-timestamp=true keepalive-time=500 ! "
+                "capsfilter caps=\"%s\" ! videorate drop-only=true max-rate=%d ! "
+                "video/x-raw(ANY)",
+                portal_pipewire_fd(app->portal), portal_node(app->portal), caps, app->fps);
+        }
         g_free(caps);
     } else
         src = g_strdup_printf("ximagesrc use-damage=false show-pointer=true "
