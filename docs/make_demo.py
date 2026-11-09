@@ -43,15 +43,28 @@ W, H = OUT_W * SS, OUT_H * SS
 FPS = 25
 SUB = 2                     # cuplikan per frame, dirata-ratakan jadi jejak gerak
 
-BG = (14, 17, 22)           # latar gelap
-RULE = (22, 26, 33)         # garis latar
-PANEL = (18, 22, 29)        # badan perangkat dan kartu
-HAIR = (58, 68, 83)         # garis bentuk
-INK = (233, 237, 244)       # teks utama, pena, penunjuk
-GREY = (138, 149, 166)      # teks pendamping
-GLASS = (28, 35, 48)        # isi layar perangkat
-TINT = (40, 49, 63)         # isi bentuk di dalam layar
-ACCENT = (167, 139, 250)   # ungu terang
+# Dua set warna: gelap untuk README di GitHub, terang untuk portofolio yang
+# berlatar putih. Dipilih lewat --light.
+DARK = dict(BG=(14, 17, 22), RULE=(22, 26, 33), PANEL=(18, 22, 29), HAIR=(58, 68, 83),
+            INK=(233, 237, 244), GREY=(138, 149, 166), GLASS=(28, 35, 48),
+            TINT=(40, 49, 63), BASE=(25, 29, 37))
+LIGHT = dict(BG=(255, 255, 255), RULE=(236, 238, 242), PANEL=(255, 255, 255),
+             HAIR=(196, 203, 214), INK=(23, 26, 33), GREY=(107, 116, 132),
+             GLASS=(246, 248, 251), TINT=(230, 235, 242), BASE=(243, 245, 248))
+ACCENT = (139, 108, 246)    # ungu terang, sama di kedua set
+
+BG = RULE = PANEL = HAIR = INK = GREY = GLASS = TINT = BASE = None
+
+
+def set_theme(name):
+    global BG, RULE, PANEL, HAIR, INK, GREY, GLASS, TINT, BASE
+    t = LIGHT if name == "light" else DARK
+    BG, RULE, PANEL = t["BG"], t["RULE"], t["PANEL"]
+    HAIR, INK, GREY = t["HAIR"], t["INK"], t["GREY"]
+    GLASS, TINT, BASE = t["GLASS"], t["TINT"], t["BASE"]
+
+
+set_theme("dark")
 
 STROKE = 1.6                # tebal garis dalam satuan tayang
 
@@ -133,26 +146,30 @@ def over(img, lay):
     return Image.alpha_composite(img, lay)
 
 
-def rr(d, box, radius, fill=None, line_color=HAIR, width=STROKE, alpha=255):
+def rr(d, box, radius, fill=None, line_color=None, width=STROKE, alpha=255):
+    line_color = HAIR if line_color is None else line_color
     d.rounded_rectangle(px(*box), radius * SS,
                         fill=(tuple(fill) + (alpha,)) if fill else None,
                         outline=(tuple(line_color) + (alpha,)) if line_color else None,
                         width=max(1, int(width * SS)) if line_color else 0)
 
 
-def circle(d, x, y, r, fill=None, line_color=HAIR, width=STROKE, alpha=255):
+def circle(d, x, y, r, fill=None, line_color=None, width=STROKE, alpha=255):
+    line_color = HAIR if line_color is None else line_color
     d.ellipse(px(x - r, y - r, x + r, y + r),
               fill=(tuple(fill) + (alpha,)) if fill else None,
               outline=(tuple(line_color) + (alpha,)) if line_color else None,
               width=max(1, int(width * SS)) if line_color else 0)
 
 
-def seg(d, a, b, color=HAIR, width=STROKE, alpha=255):
+def seg(d, a, b, color=None, width=STROKE, alpha=255):
+    color = HAIR if color is None else color
     d.line(px(a[0], a[1], b[0], b[1]), fill=tuple(color) + (alpha,),
            width=max(1, int(width * SS)))
 
 
-def text(d, s, xy, size=14, color=INK, path=None, center=False, alpha=255, track=0.0):
+def text(d, s, xy, size=14, color=None, path=None, center=False, alpha=255, track=0.0):
+    color = INK if color is None else color
     """Teks biasa; track merenggangkan huruf sedikit untuk judul."""
     f = font(path or REG, size)
     x, y = px(*xy)
@@ -202,7 +219,7 @@ def stage(t):
     step = 40
     for i in range(1, OUT_W // step + 1):
         d.line(px(i * step, 0, i * step, OUT_H), fill=RULE, width=max(1, int(SS)))
-    d.line(px(0, 436, OUT_W, 436), fill=(25, 29, 37), width=max(1, int(SS)))
+    d.line(px(0, 436, OUT_W, 436), fill=BASE, width=max(1, int(SS)))
     return img.convert("RGBA")
 
 
@@ -215,7 +232,7 @@ def picture(img, box, k=1.0, framed=False, alpha=255):
     if framed:
         sh = layer()
         ImageDraw.Draw(sh).rounded_rectangle(px(box[0], box[1] + 7, box[2], box[3] + 7),
-                                             5 * SS, fill=(0, 0, 0, 120))
+                                             5 * SS, fill=(0, 0, 0, 120 if BG[0] < 128 else 40))
         img = over(img, sh.filter(ImageFilter.GaussianBlur(5 * SS)))
     lay = layer()
     d = ImageDraw.Draw(lay)
@@ -318,7 +335,8 @@ def tick(lay, x, y, k):
            int(150 * (1 - k) ** 2))
 
 
-def dashed(d, a, b, phase, color=HAIR, width=1.3, dash=7, gap=7, alpha=255):
+def dashed(d, a, b, phase, color=None, width=1.3, dash=7, gap=7, alpha=255):
+    color = HAIR if color is None else color
     (ax, ay), (bx, by) = a, b
     total = math.hypot(bx - ax, by - ay)
     if total < 1:
@@ -584,29 +602,70 @@ def to_gif(tmp, out):
                     str(out)], check=True)
 
 
-def build(name, scene, length, lang, outdir):
-    out = outdir / (f"demo-{name}.gif" if lang == "en" else f"demo-{name}-{lang}.gif")
+def to_mp4(tmp, out):
+    """Untuk halaman web: lebih kecil dan lebih halus daripada GIF."""
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-framerate", str(FPS),
+                    "-i", str(tmp / "f%04d.png"), "-vf", "scale=880:494:flags=lanczos",
+                    "-c:v", "libx264", "-preset", "slow",
+                    "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                    str(out)], check=True)
+    shutil.copy(tmp / "f0000.png", out.with_suffix(".png"))
+
+
+def build(name, scene, length, lang, outdir, kind="gif", theme="dark", stem=None):
+    ext = "mp4" if kind == "mp4" else "gif"
+    base = stem or (f"demo-{name}" if lang == "en" else f"demo-{name}-{lang}")
+    out = outdir / f"{base}.{ext}"
+    set_theme(theme)
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
         render(scene, length, lang, tmp)
-        to_gif(tmp, out)
+        (to_mp4 if kind == "mp4" else to_gif)(tmp, out)
     print(f"{out.name}: {out.stat().st_size / 1024:.0f} KB")
 
 
 def main():
+    """Tanpa argumen: enam GIF gelap untuk README. Pilihan lain:
+
+        --light           pakai set warna terang
+        --mp4             keluarkan MP4 dan satu gambar sampul, bukan GIF
+        --out DIR         folder tujuan
+        --lang en|id      hanya satu bahasa
+        nama adegan       share, second, airplay
+    """
     if not shutil.which("ffmpeg"):
         sys.exit("ffmpeg belum terpasang: sudo apt install ffmpeg")
+    args = sys.argv[1:]
+    theme = "light" if "--light" in args else "dark"
+    kind = "mp4" if "--mp4" in args else "gif"
     outdir = pathlib.Path("docs/media")
+    langs = ("en", "id")
+    rest = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--out" and i + 1 < len(args):
+            outdir = pathlib.Path(args[i + 1])
+            i += 1
+        elif a == "--lang" and i + 1 < len(args):
+            langs = (args[i + 1],)
+            i += 1
+        elif not a.startswith("--"):
+            rest.append(a)
+        i += 1
+
     outdir.mkdir(parents=True, exist_ok=True)
     jobs = [("share", scene_share, SHARE_LEN),
             ("second", scene_second, SECOND_LEN),
             ("airplay", scene_airplay, AIRPLAY_LEN)]
-    only = sys.argv[1:] or None
     for name, scene, length in jobs:
-        if only and name not in only:
+        if rest and name not in rest:
             continue
-        for lang in ("en", "id"):
-            build(name, scene, length, lang, outdir)
+        for lang in langs:
+            stem = None
+            if kind == "mp4":
+                stem = f"tsunagupad-{name}" if len(langs) == 1 else f"tsunagupad-{name}-{lang}"
+            build(name, scene, length, lang, outdir, kind, theme, stem)
 
 
 if __name__ == "__main__":
