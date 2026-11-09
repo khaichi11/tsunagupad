@@ -321,7 +321,9 @@ surrounding code and describe how you tested the change.
 
 The code in this repository is licensed under the [MIT License](LICENSE).
 Third party components stay under their own licenses; see
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which also says plainly which
+parts are standards implemented by other people and which parts are the work
+claimed here.
 
 Apple, iPad, iPadOS, Safari, Apple Pencil, and AirPlay are trademarks of Apple
 Inc. This project is not affiliated with, endorsed by, or sponsored by Apple

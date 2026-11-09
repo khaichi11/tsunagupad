@@ -322,7 +322,9 @@ dan jelaskan cara Anda mengujinya.
 
 Kode di repository ini memakai [Lisensi MIT](LICENSE). Komponen pihak ketiga
 tetap memakai lisensinya masing-masing; lihat
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), yang juga menyebut terus
+terang bagian mana yang berupa standar buatan orang lain dan bagian mana yang
+memang pekerjaan di repository ini.
 
 Apple, iPad, iPadOS, Safari, Apple Pencil, dan AirPlay adalah merek Apple Inc.
 Proyek ini tidak berafiliasi, tidak didukung, dan tidak disponsori oleh Apple

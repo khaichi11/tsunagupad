@@ -19,11 +19,46 @@ masing-masing.
 | JSON-GLib | LGPL-2.1-or-later | Message parsing |
 | libqrencode | LGPL-2.1-or-later | QR code generation |
 | libX11, libXtst | MIT | Screen capture region and input injection |
+| libpipewire 0.3 | MIT | Reading the virtual monitor's stream and its cursor metadata |
 
 These libraries are used through their public interfaces as shared libraries.
 No code from them is copied into this repository, which is why the MIT license
 applies to the files here. Their license terms continue to apply to the
 libraries themselves.
+
+## Standards, and what is written here
+
+WebRTC, H.264, RTP, SDP, ICE and DTLS are open standards published by the IETF,
+the W3C and the ITU. Standards can be implemented by anyone; this project does
+not implement them from scratch and does not claim to. The implementations come
+from GStreamer and its plugins, from the browser on the iPad, and from the
+graphics driver that encodes H.264 on the GPU.
+
+What is written here, and what the MIT license covers, is the program that puts
+those pieces together and the behaviour that comes out of it:
+
+- the daemon in `src/`: the pipelines and their timing, the PipeWire reader that
+  takes the cursor metadata the GStreamer element drops, the virtual monitor
+  created and placed through Mutter's D-Bus interface, the pen, touch and
+  keyboard path into virtual input devices, the bitrate and keyframe control,
+  and the small web server and signalling;
+- the page in `web/`: the client the iPad actually runs in Safari;
+- the GNOME Shell extension in `extension/`, the hotspot and installer scripts
+  in `system/`, and the animations in `docs/`.
+
+Using a library is not the same as claiming it. A program that speaks HTTP did
+not invent HTTP; this one did not invent WebRTC. The work claimed here is the
+design and the code in this repository.
+
+## A note on the software encoders
+
+H.264 is covered by patents in some countries, and the encoders are installed
+from your distribution rather than shipped here: `vah264lpenc` and `vaapih264enc`
+(Intel, LGPL), `nvautogpuh264enc` (NVIDIA, LGPL plugin over a proprietary
+driver), `nvv4l2h264enc` on Jetson boards, and `x264enc` as a fallback. The x264
+plugin is GPL-2.0-or-later; it is loaded at runtime from the distribution and no
+part of it is copied or redistributed here. Check the rules of your own
+jurisdiction if you redistribute binaries.
 
 ## Separate programs invoked at runtime
 
