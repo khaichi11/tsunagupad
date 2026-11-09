@@ -117,8 +117,10 @@ Tsunagu-Pad untuk melihat pilihan.
 2. Ketuk tombol Tsunagu-Pad. Di Wayland, GNOME menampilkan jendela izin pada
    pertama kali: pilih layar, nyalakan **Allow Remote Interaction** agar iPad
    bisa mengontrol Ubuntu, dan biarkan **Remember This Selection** menyala.
-   Pilihan diingat; supaya ditanya lagi, cabut izinnya di Pengaturan GNOME atau
-   hapus `~/.config/tsunagupad/portal-token`, lalu nyalakan ulang.
+   Pilihan layarnya ikut diingat, itu sebabnya jendela izinnya tidak muncul
+   lagi dan layar yang dibagikan selalu sama. Untuk memilih layar lain, pakai
+   **Pilih layar lagi** di panel, atau jalankan sekali
+   `tsunagupad share --pick-screen`.
 3. Pindai QR dengan kamera iPad, atau ketik alamatnya di Safari.
 4. Opsional: di Safari pilih Bagikan, lalu Tambahkan ke Layar Utama, supaya
    halaman terbuka layar penuh seperti aplikasi.

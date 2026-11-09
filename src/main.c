@@ -334,6 +334,8 @@ static int cmd_share(int argc, char **argv)
         { "test-source", 0, 0, G_OPTION_ARG_NONE, &app.test_source, "Pola uji, bukan layar asli", NULL },
         { "web-dir", 0, 0, G_OPTION_ARG_FILENAME, &web_dir, "Folder halaman web iPad", "DIR" },
         { "reset-token", 0, 0, G_OPTION_ARG_NONE, &reset_token, "Buat kode akses baru", NULL },
+        { "pick-screen", 0, 0, G_OPTION_ARG_NONE, &app.pick_screen,
+          "Tanya lagi layar mana yang dibagikan (Wayland)", NULL },
         { NULL },
     };
     GOptionContext *ctx = g_option_context_new("- bagikan layar Ubuntu ke iPad");

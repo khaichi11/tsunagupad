@@ -116,8 +116,9 @@ Tsunagu-Pad button for the options.
 2. Tap the Tsunagu-Pad button. On Wayland, GNOME shows a permission window the
    first time: pick the screen, turn on **Allow Remote Interaction** so the iPad
    can control Ubuntu, and keep **Remember This Selection** on. The choice is
-   remembered; to be asked again, turn sharing off and on after revoking it in
-   GNOME Settings, or delete `~/.config/tsunagupad/portal-token`.
+   remembered, which is why the window does not appear again and the same
+   screen is shared every time. To pick a different screen, use **Pilih layar
+   lagi** in the panel, or run `tsunagupad share --pick-screen` once.
 3. Scan the QR code with the iPad camera, or type the address into Safari.
 4. Optional: in Safari use Share, then Add to Home Screen, so the page opens
    full screen like an app.

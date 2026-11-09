@@ -229,8 +229,14 @@ Portal *portal_open(App *app, GError **error)
     p->session = g_strdup(handle);
     g_variant_unref(results);
 
-    /* 2. perangkat masukan; izin diingat sampai dicabut pengguna */
-    char *restore = token_load();
+    /* 2. perangkat masukan; izin diingat sampai dicabut pengguna.
+     *
+     * Pilihan layar ikut tersimpan di dalam token itu, jadi sesi berikutnya
+     * langsung memakai layar yang sama tanpa bertanya. Dengan --pick-screen
+     * tokennya dibuang lebih dulu supaya GNOME menampilkan pilihannya lagi. */
+    if (app->pick_screen)
+        token_clear();
+    char *restore = app->pick_screen ? NULL : token_load();
     g_variant_builder_init(&opts, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&opts, "{sv}", "types", g_variant_new_uint32(DEVICE_KEYBOARD | DEVICE_POINTER));
     g_variant_builder_add(&opts, "{sv}", "persist_mode", g_variant_new_uint32(PERSIST_UNTIL_REVOKED));

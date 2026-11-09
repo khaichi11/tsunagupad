@@ -412,6 +412,19 @@ class TsunaguPadToggle extends QuickMenuToggle {
 
         /* Di Wayland, GNOME menanyakan layar yang dibagikan dan izin kendali lewat jendela
          * sendiri; pilihannya diingat, jadi petunjuk ini hanya perlu muncul saat belum berjalan. */
+        /* Pilihan layar ikut diingat GNOME, jadi jendela izinnya tidak muncul lagi
+           di sesi berikutnya. Baris ini membuangnya sekali supaya bisa memilih
+           layar lain. */
+        this._pickItem = new PopupMenu.PopupMenuItem('Pilih layar lagi');
+        this._pickItem.connect('activate', () => {
+            this._pickScreen = true;
+            if (this._daemonKind === 'share')
+                this._restart().catch(e => this._notify(e.message));
+            else
+                this._notify('Nyalakan Tsunagu-Pad; GNOME akan menanyakan layarnya lagi.');
+        });
+        this.menu.addMenuItem(this._pickItem);
+
         this._hint = new St.Label({style_class: 'tsunagupad-caption tsunagupad-caption-left', x_expand: true});
         this._hint.text = 'GNOME menampilkan jendela izin. Pilih layar dan nyalakan "Allow Remote Interaction" agar iPad bisa mengontrol; pilihan diingat.';
         this._hint.clutter_text.line_wrap = true;
@@ -596,6 +609,7 @@ class TsunaguPadToggle extends QuickMenuToggle {
 
         this._modeControl.setSelected(mode);
         this._hintItem.visible = share && isWayland() && !running && !this._starting;
+        this._pickItem.visible = share && isWayland();
 
         const selected = this._selectedOutput();
         const wayland = isWayland();
@@ -654,6 +668,10 @@ class TsunaguPadToggle extends QuickMenuToggle {
                 argv = [bin, 'share', '--quality', this._config.quality];
                 if (isWayland() && this._config.second)
                     argv.push('--second', this._config.secondSize);
+                if (isWayland() && this._pickScreen) {
+                    argv.push('--pick-screen');
+                    this._pickScreen = false;
+                }
                 /* Wayland: layar dipilih di jendela izin GNOME. X11: area dari xrandr. */
                 if (!isWayland()) {
                     const out = await this._shareTarget();
