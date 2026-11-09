@@ -401,6 +401,10 @@ TEXTS = {
         "airplay_sub": "The iPad screen on Ubuntu, over AirPlay",
         "airplay_foot": "Control Centre, Screen Mirroring, then Tsunagu-Pad Ubuntu",
         "ubuntu": "Ubuntu", "ipad": "iPad", "second": "second screen",
+        "ov_sub": "An iPad as a second screen for Ubuntu, over Wi-Fi",
+        "ov_a": "nothing installed, just Safari",
+        "ov_b": "Apple Pencil, pressure and tilt",
+        "ov_c": "60 fps on its own hotspot",
     },
     "id": {
         "share_sub": "Layar Ubuntu di iPad, dan iPad yang mengendalikannya",
@@ -410,6 +414,10 @@ TEXTS = {
         "airplay_sub": "Layar iPad tampil di Ubuntu lewat AirPlay",
         "airplay_foot": "Pusat Kontrol, Pencerminan Layar, lalu Tsunagu-Pad Ubuntu",
         "ubuntu": "Ubuntu", "ipad": "iPad", "second": "layar kedua",
+        "ov_sub": "iPad jadi layar kedua Ubuntu lewat Wi-Fi",
+        "ov_a": "tanpa pasang apa pun, cukup Safari",
+        "ov_b": "Apple Pencil, tekanan dan kemiringan",
+        "ov_c": "60 fps lewat hotspotnya sendiri",
     },
 }
 
@@ -576,6 +584,194 @@ def scene_airplay(t, s):
     return img
 
 
+# ---------- adegan gabungan untuk portofolio ----------
+
+OVERVIEW_LEN = 10.0
+OV_MARKS = [(0.30, 0.64), (0.44, 0.33), (0.70, 0.30), (0.80, 0.62), (0.54, 0.80)]
+
+
+def app_window(img, box, title_k=1.0, photo_k=1.0, marks=(), closed=False, alpha=255):
+    """Jendela aplikasi pelabelan: daftar di kiri, foto tangga di kanan."""
+    lay = layer()
+    d = ImageDraw.Draw(lay)
+    x0, y0, x1, y1 = box
+    rr(d, box, 6, PANEL, HAIR, STROKE, alpha)
+    seg(d, (x0, y0 + 16), (x1, y0 + 16), HAIR, 1.2, alpha)
+    for i in range(3):
+        circle(d, x0 + 11 + i * 8, y0 + 8, 2.1, None, HAIR, 1.2, alpha)
+    side = x0 + (x1 - x0) * 0.3
+    seg(d, (side, y0 + 16), (side, y1), HAIR, 1.2, alpha)
+    for i in range(4):
+        yy = y0 + 26 + i * 11
+        if yy > y1 - 8:
+            break
+        on = i == 1
+        rr(d, (x0 + 8, yy, side - 8, yy + 7), 3, ACCENT if on else TINT, None, 0, alpha)
+    img = over(img, lay)
+
+    photo = (side + 7, y0 + 23, x1 - 7, y1 - 7)
+    img = picture(img, photo, photo_k, alpha=alpha)
+    if marks:
+        lay = layer()
+        d = ImageDraw.Draw(lay)
+        pts = [(photo[0] + nx * (photo[2] - photo[0]), photo[1] + ny * (photo[3] - photo[1]))
+               for nx, ny in marks]
+        if len(pts) > 1:
+            path = pts + ([pts[0]] if closed else [])
+            d.line([px(*q) for q in path], fill=tuple(ACCENT) + (alpha,),
+                   width=max(1, int(1.7 * SS)), joint="curve")
+        for q in pts:
+            circle(d, q[0], q[1], 3.1, PANEL, ACCENT, 1.5, alpha)
+        img = over(img, lay)
+    return img, photo
+
+
+def scene_overview(t, s):
+    img = stage(t)
+
+    img, lap = enter(img, t, 0.45, lambda lift: laptop_art(52, 150 + lift, 352, 226))
+    img, tab = enter(img, t, 1.25, lambda lift: tablet_art(552, 162 + lift, 276, 194))
+
+    # Jendela kedua tetap tinggal di laptop supaya layarnya tidak kosong.
+    stay_a = int(255 * ease(span(t, 3.6, 4.2)))
+    if stay_a > 3:
+        lay = layer()
+        window_card(ImageDraw.Draw(lay), (lap[0] + 18, lap[1] + 20, lap[0] + 150, lap[1] + 104),
+                    stay_a, 4)
+        img = over(img, lay)
+
+    # Jendela aplikasi: mulai di laptop, lalu pindah ke iPad.
+    move = ease(span(t, 3.3, 4.6))
+    src = (lap[0] + 12, lap[1] + 14, lap[2] - 12, lap[3] - 12)
+    dst = (tab[0] + 8, tab[1] + 20, tab[2] - 8, tab[3] - 8)
+    win = tuple(mix(src[i], dst[i], move) for i in range(4))
+
+    # Titik yang sudah ditandai, muncul satu per satu lewat pena.
+    first, gap = 5.0, 0.55
+    shown = [m for i, m in enumerate(OV_MARKS) if t >= first + i * gap]
+    done = first + (len(OV_MARKS) - 1) * gap
+    win_a = int(255 * ease(span(t, 1.0, 1.5)))
+    if win_a > 3:
+        img, photo = app_window(img, win, 1.0, ease(span(t, 1.2, 1.9)), shown,
+                                closed=len(shown) == len(OV_MARKS) and t > done + 0.3,
+                                alpha=win_a)
+    else:
+        photo = win
+
+    lay = layer()
+    d = ImageDraw.Draw(lay)
+
+    # Bingkai Safari di iPad: tidak ada yang dipasang, cukup halaman web.
+    safari = ease(span(t, 2.6, 3.3))
+    if safari > 0 and move < 0.02:
+        pass
+    if t > 2.6:
+        a = int(255 * min(safari, 1.0))
+        rr(d, (tab[0] + 8, tab[1] + 6, tab[2] - 8, tab[1] + 18), 6, GLASS, HAIR, 1.2, a)
+        text(d, "safari", (tab[0] + 16, tab[1] + 8), 8.5, GREY, REG, alpha=a)
+
+    link = ease(span(t, 2.2, 2.9))
+    if link > 0 and move < 0.05:
+        dashed(d, (lap[2] + 12, 262), (mix(lap[2] + 12, tab[0] - 12, link), 262), t * 2.0)
+        if link > 0.85:
+            chip(d, (lap[2] + tab[0]) / 2, 262, s["second"], int(255 * span(t, 2.8, 3.1)))
+
+    # Penunjuk ikut menyeberang saat jendelanya pindah.
+    if 0.02 < move < 1:
+        pointer(lay, win[0] + 20, win[1] + 8)
+
+    # Pena menandai titik di iPad.
+    if first - 0.5 <= t <= done + 1.0:
+        idx = min(len(OV_MARKS) - 1, max(0, int((t - first) / gap) + (1 if t >= first else 0)))
+        leg = clamp(((t - first) % gap) / (gap * 0.68)) if t >= first else 1.0
+        p = mixp(OV_MARKS[max(0, idx - 1)], OV_MARKS[idx], ease(leg)) if t >= first else OV_MARKS[0]
+        lift = 1 - clamp(leg * 1.5)
+        if t > done + 0.3:
+            out = ease(span(t, done + 0.3, done + 1.0))
+            p = mixp(OV_MARKS[-1], (OV_MARKS[-1][0] + 0.18, OV_MARKS[-1][1] + 0.3), out)
+            lift = max(lift, out)
+        pen(lay, photo[0] + p[0] * (photo[2] - photo[0]),
+            photo[1] + p[1] * (photo[3] - photo[1]), lift)
+        for i, m in enumerate(shown):
+            tick(lay, photo[0] + m[0] * (photo[2] - photo[0]),
+                 photo[1] + m[1] * (photo[3] - photo[1]), span(t, first + i * gap, first + i * gap + 0.5))
+
+    # Tiga keterangan pendek, muncul berurutan.
+    notes = [(s["ov_a"], 4.9), (s["ov_b"], 6.6), (s["ov_c"], 8.0)]
+    for i, (note, at) in enumerate(notes):
+        k = ease(span(t, at, at + 0.5))
+        if k > 0.02:
+            chip(d, 152 + i * 288, 455 + (1 - k) * 6, note, int(255 * k))
+
+    img = over(img, lay)
+    img = wordmark(img, t, s["ov_sub"])
+    img = tag(img, t, 1.9, (228, 400), s["ubuntu"])
+    img = tag(img, t, 2.1, (690, 376), s["ipad"])
+    return img
+
+
+# ---------- panel GNOME ----------
+
+def panel_image(lang="en", scale=2):
+    """Gambar panel Pengaturan Cepat GNOME berisi sakelar Tsunagu-Pad.
+
+    Digambar sendiri, bukan tangkapan layar, supaya tidak ada nama jaringan,
+    nama perangkat Bluetooth, atau wallpaper pribadi yang ikut terbawa."""
+    global SS, W, H
+    old = (SS, W, H)
+    SS = scale
+    pw, ph = 380, 436
+    W, H = pw * SS, ph * SS
+    img = Image.new("RGBA", (W, H), tuple(BG) + (255,))
+    d = ImageDraw.Draw(img)
+    rr(d, (8, 8, pw - 8, ph - 8), 20, PANEL, HAIR, STROKE)
+
+    def tile(x, y, w, h, title, sub, on=False):
+        col = ACCENT if on else HAIR
+        rr(d, (x, y, x + w, y + h), 14, GLASS, col, 1.6 if on else 1.2)
+        circle(d, x + 20, y + h / 2, 8, None, col, 1.4)
+        text(d, title, (x + 38, y + (14 if sub else 20)), 12.5,
+             ACCENT if on else INK, MED)
+        if sub:
+            text(d, sub, (x + 38, y + 31), 10.5, GREY, REG)
+
+    # baris atas: baterai dan empat tombol bulat
+    rr(d, (22, 26, 112, 60), 17, GLASS, HAIR, 1.2)
+    circle(d, 40, 43, 7, None, HAIR, 1.4)
+    text(d, "79%", (56, 36), 12, INK, MED)
+    for i in range(4):
+        circle(d, 196 + i * 44, 43, 17, GLASS, HAIR, 1.2)
+        circle(d, 196 + i * 44, 43, 6, None, HAIR, 1.3)
+
+    # dua penggeser
+    for i, frac in enumerate((0.42, 0.33)):
+        y = 82 + i * 34
+        circle(d, 34, y + 9, 8, None, HAIR, 1.4)
+        rr(d, (54, y + 3, pw - 32, y + 15), 6, GLASS, HAIR, 1.2)
+        rr(d, (54, y + 3, 54 + (pw - 86) * frac, y + 15), 6, TINT, None, 0)
+        circle(d, 54 + (pw - 86) * frac, y + 9, 9, PANEL, HAIR, 1.6)
+
+    labels = {
+        "en": [("Wi-Fi", "Connected"), ("Bluetooth", "On"),
+               ("Power Mode", "Performance"), ("Night Light", None),
+               ("Dark Style", None), ("Do Not Disturb", None),
+               ("Airplane Mode", None), ("Tsunagu-Pad", "Ubuntu to iPad")],
+        "id": [("Wi-Fi", "Tersambung"), ("Bluetooth", "Menyala"),
+               ("Mode Daya", "Performa"), ("Cahaya Malam", None),
+               ("Gaya Gelap", None), ("Jangan Ganggu", None),
+               ("Mode Pesawat", None), ("Tsunagu-Pad", "Ubuntu ke iPad")],
+    }[lang]
+    tw, th, gap = (pw - 56) / 2, 48, 10
+    for i, (title, sub) in enumerate(labels):
+        col, row = i % 2, i // 2
+        tile(24 + col * (tw + gap), 160 + row * (th + gap), tw, th, title, sub,
+             on=title == "Tsunagu-Pad")
+
+    out = img.convert("RGB").resize((pw, ph), Image.LANCZOS)
+    SS, W, H = old
+    return out
+
+
 # ---------- render ----------
 
 def render(scene, length, lang, tmp):
@@ -655,10 +851,21 @@ def main():
         i += 1
 
     outdir.mkdir(parents=True, exist_ok=True)
-    jobs = [("share", scene_share, SHARE_LEN),
+    if "--panel" in args:
+        for lang in langs:
+            set_theme(theme)
+            name = "panel" if len(langs) == 1 and kind == "mp4" else f"panel-{lang}"
+            out = outdir / (f"tsunagupad-{name}.png" if kind == "mp4" else f"{name}.png")
+            panel_image(lang).save(out)
+            print(f"{out.name}: {out.stat().st_size / 1024:.0f} KB")
+        return
+    jobs = [("overview", scene_overview, OVERVIEW_LEN),
+            ("share", scene_share, SHARE_LEN),
             ("second", scene_second, SECOND_LEN),
             ("airplay", scene_airplay, AIRPLAY_LEN)]
     for name, scene, length in jobs:
+        if name == "overview" and not (rest and "overview" in rest):
+            continue
         if rest and name not in rest:
             continue
         for lang in langs:
