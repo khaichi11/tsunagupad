@@ -83,11 +83,33 @@ it.
 
 ## Install
 
+Download `tsunagupad_<version>_amd64.deb` from the
+[releases page](https://github.com/khaichi11/tsunagupad/releases) and open it,
+or install it from a terminal:
+
+```bash
+sudo apt install ./tsunagupad_0.1.0_amd64.deb
+```
+
+That is the whole installation. Everything the program needs is listed as a
+dependency of the package, so anything missing is fetched for you, with the
+usual progress bar in App Center or the usual list in apt. The hotspot gets its
+own random password on first install, and the terminal prints it.
+
+Afterwards, log out and log in again once, then turn the panel switch on:
+
+```bash
+gnome-extensions enable tsunagu-pad@local
+```
+
+### Or build it yourself
+
 ```bash
 git clone https://github.com/khaichi11/tsunagupad.git
 cd tsunagupad
 chmod +x install.sh
-./install.sh
+./install.sh            # builds and installs into ~/.local
+tool/build_deb.sh       # or build the .deb instead
 ```
 
 The installer asks for the administrator password once. It installs the packages

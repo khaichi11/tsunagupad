@@ -84,11 +84,34 @@ di buffer.
 
 ## Pemasangan
 
+Unduh `tsunagupad_<versi>_amd64.deb` dari
+[halaman rilis](https://github.com/khaichi11/tsunagupad/releases) lalu buka
+berkasnya, atau pasang lewat terminal:
+
+```bash
+sudo apt install ./tsunagupad_0.1.0_amd64.deb
+```
+
+Sudah, itu saja pemasangannya. Semua yang dibutuhkan programnya terdaftar
+sebagai ketergantungan paket, jadi yang belum ada diunduhkan sendiri, lengkap
+dengan bilah kemajuan di App Center atau daftar biasa di apt. Hotspotnya
+mendapat kata sandi acak sendiri saat pertama dipasang, dan kata sandinya
+dicetak di terminal.
+
+Setelah itu keluar lalu masuk lagi sekali, kemudian nyalakan sakelarnya:
+
+```bash
+gnome-extensions enable tsunagu-pad@local
+```
+
+### Atau bangun sendiri
+
 ```bash
 git clone https://github.com/khaichi11/tsunagupad.git
 cd tsunagupad
 chmod +x install.sh
-./install.sh
+./install.sh            # membangun dan memasang ke ~/.local
+tool/build_deb.sh       # atau membuat berkas .deb-nya
 ```
 
 Pemasang meminta kata sandi administrator satu kali. Ia memasang paket yang
