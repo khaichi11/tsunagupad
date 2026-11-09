@@ -85,8 +85,8 @@ di buffer.
 ## Pemasangan
 
 ```bash
-git clone https://github.com/khaichi11/tsunagu-pad.git
-cd tsunagu-pad
+git clone https://github.com/khaichi11/tsunagupad.git
+cd tsunagupad
 chmod +x install.sh
 ./install.sh
 ```
