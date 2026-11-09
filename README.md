@@ -233,6 +233,16 @@ prints the machine model and what was detected. The hotspot only appears when
 the Wi-Fi chip can be an access point while staying connected, and the encoder
 is chosen by trying each one on that machine.
 
+## Why it exists
+
+I needed three things to be true at the same time: a screen the compositor
+really owns on a Wayland session, nothing installed on the iPad, and an Apple
+Pencil that reaches applications as a tablet with pressure and tilt rather than
+as a mouse. Reaching all three meant solving a few things along the way: a
+compositor that only repaints a virtual monitor when its contents change, a
+cursor that is never drawn into the stream, and a monitor whose serial number
+changes every session so the desktop forgets where it was placed.
+
 ## Quality and latency
 
 Five presets are available, from 960 pixels wide at 30 frames per second up to

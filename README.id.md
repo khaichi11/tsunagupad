@@ -234,6 +234,16 @@ menampilkan model mesin dan hasil deteksinya. Hotspot hanya muncul kalau chip
 Wi-Fi bisa menjadi titik akses sambil tetap tersambung, dan encoder dipilih
 dengan mencobanya satu per satu di mesin itu.
 
+## Kenapa ini dibuat
+
+Ada tiga hal yang harus benar sekaligus: layar yang benar-benar dimiliki
+kompositor di sesi Wayland, tidak ada yang perlu dipasang di iPad, dan Apple
+Pencil yang sampai ke aplikasi sebagai tablet dengan tekanan serta kemiringan,
+bukan sebagai mouse. Untuk sampai ke sana ada beberapa hal yang harus
+dipecahkan dulu: kompositor yang hanya menggambar ulang monitor virtual saat
+isinya berubah, kursor yang tidak pernah ikut terkirim, dan monitor yang nomor
+serinya berganti tiap sesi sehingga letaknya selalu dilupakan.
+
 ## Kualitas dan latensi
 
 Tersedia lima pilihan, dari lebar 960 piksel pada 30 frame per detik sampai
