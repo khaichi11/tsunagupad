@@ -11,6 +11,8 @@
  *
  * SPDX-License-Identifier: MIT
  */
+#include <stdio.h>
+
 #include "tsunagupad.h"
 
 #define MUTTER_RD      "org.gnome.Mutter.RemoteDesktop"
@@ -27,6 +29,7 @@ struct _Virtmon {
     int width, height;
     double scale;           /* skala yang dipakai sekarang */
     double want;            /* skala pilihan pengguna; 0 = ikut monitor utama */
+    guint watch;            /* langganan sinyal MonitorsChanged */
     gboolean hide_cursor;
 };
 
@@ -227,6 +230,41 @@ void virtmon_key(Virtmon *v, int keycode, gboolean press)
  * Tanpa langkah ini layarnya gelap, kursor tidak pernah bisa ke sana, dan
  * susunannya hilang setiap kali sesi dimulai. Susunan layar yang sudah ada
  * disalin apa adanya; yang ditambahkan hanya monitor virtual di sisi kanan. */
+/* Letak monitor virtual disimpan sendiri.
+ *
+ * Mutter memberi monitor ini nomor seri baru setiap sesi (0x000001, 0x000002,
+ * dan seterusnya), sedangkan GNOME mencocokkan susunan layar yang tersimpan
+ * lewat nomor seri itu. Akibatnya susunan yang sudah diatur pengguna tidak
+ * pernah cocok lagi di sesi berikutnya dan monitornya selalu kembali ke tepi
+ * kanan. Jadi letaknya dicatat di sini, relatif terhadap monitor utama, lalu
+ * dipasang lagi sendiri. */
+static char *layout_path(void)
+{
+    return g_build_filename(g_get_user_config_dir(), "tsunagupad", "second-screen", NULL);
+}
+
+static gboolean layout_load(int *dx, int *dy)
+{
+    char *path = layout_path(), *text = NULL;
+    gboolean ok = g_file_get_contents(path, &text, NULL, NULL) &&
+                  sscanf(text, "%d %d", dx, dy) == 2;
+    g_free(text);
+    g_free(path);
+    return ok;
+}
+
+static void layout_save(int dx, int dy)
+{
+    char *path = layout_path();
+    char *dir = g_path_get_dirname(path);
+    g_mkdir_with_parents(dir, 0700);
+    char *text = g_strdup_printf("%d %d\n", dx, dy);
+    g_file_set_contents(path, text, -1, NULL);
+    g_free(text);
+    g_free(dir);
+    g_free(path);
+}
+
 #define STATE_TYPE "(ua((ssss)a(siiddada{sv})a{sv})a(iiduba(ssss)a{sv})a{sv})"
 
 typedef struct {
@@ -293,6 +331,75 @@ static void free_mode(gpointer data)
     g_free(info);
 }
 
+/* Mencatat letak monitor virtual sekarang, supaya sesi berikutnya memakainya.
+ * Dipanggil setiap kali susunan layar berubah, termasuk saat pengguna
+ * menggesernya sendiri lewat Pengaturan. */
+static void record_layout(Virtmon *v)
+{
+    GVariant *state = g_dbus_connection_call_sync(
+        v->bus, "org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",
+        "org.gnome.Mutter.DisplayConfig", "GetCurrentState", NULL,
+        G_VARIANT_TYPE(STATE_TYPE), G_DBUS_CALL_FLAGS_NONE, 3000, NULL, NULL);
+    if (!state)
+        return;
+
+    guint32 serial = 0;
+    GVariant *monitors = NULL, *logical = NULL, *props = NULL;
+    g_variant_get(state, "(u@a((ssss)a(siiddada{sv})a{sv})@a(iiduba(ssss)a{sv})@a{sv})",
+                  &serial, &monitors, &logical, &props);
+
+    gint32 px = 0, py = 0, vx = 0, vy = 0;
+    gboolean have_main = FALSE, have_virt = FALSE;
+    GVariantIter iter;
+    gint32 lx = 0, ly = 0;
+    gdouble scale = 1.0;
+    guint32 transform = 0;
+    gboolean primary = FALSE;
+    GVariant *members = NULL, *lprops = NULL;
+    g_variant_iter_init(&iter, logical);
+    while (g_variant_iter_next(&iter, "(iidub@a(ssss)@a{sv})", &lx, &ly, &scale, &transform,
+                               &primary, &members, &lprops)) {
+        GVariantIter mit;
+        GVariant *member = NULL;
+        g_variant_iter_init(&mit, members);
+        while (g_variant_iter_next(&mit, "@(ssss)", &member)) {
+            char *connector = NULL;
+            g_variant_get_child(member, 0, "s", &connector);
+            if (connector && g_str_has_prefix(connector, "Meta-")) {
+                vx = lx;
+                vy = ly;
+                have_virt = TRUE;
+            }
+            g_free(connector);
+            g_variant_unref(member);
+        }
+        if (primary) {
+            px = lx;
+            py = ly;
+            have_main = TRUE;
+        }
+        g_clear_pointer(&members, g_variant_unref);
+        g_clear_pointer(&lprops, g_variant_unref);
+    }
+
+    if (have_main && have_virt) {
+        int dx = 0, dy = 0;
+        if (!layout_load(&dx, &dy) || dx != vx - px || dy != vy - py)
+            layout_save(vx - px, vy - py);
+    }
+    g_variant_unref(monitors);
+    g_variant_unref(logical);
+    g_variant_unref(props);
+    g_variant_unref(state);
+}
+
+static void on_monitors_changed(GDBusConnection *bus, const char *sender, const char *path,
+                                const char *iface, const char *signal, GVariant *params,
+                                gpointer data)
+{
+    record_layout(data);
+}
+
 gboolean virtmon_place(Virtmon *v, GError **error)
 {
     for (int attempt = 0; attempt < 20; attempt++) {
@@ -326,6 +433,7 @@ gboolean virtmon_place(Virtmon *v, GError **error)
          * kalau tidak GNOME mengubah cara XWayland menggambar dan aplikasi X11
          * di monitor lain ikut berubah ukurannya. */
         gdouble main_scale = 1.0;
+        gint32 main_x = 0, main_y = 0;
         {
             GVariantIter first;
             gint32 fx = 0, fy = 0;
@@ -336,8 +444,11 @@ gboolean virtmon_place(Virtmon *v, GError **error)
             g_variant_iter_init(&first, logical);
             while (g_variant_iter_next(&first, "(iidub@a(ssss)@a{sv})", &fx, &fy, &fscale,
                                        &ftransform, &fprimary, &fmembers, &fprops)) {
-                if (fprimary && fscale > 0)
+                if (fprimary && fscale > 0) {
                     main_scale = fscale;
+                    main_x = fx;
+                    main_y = fy;
+                }
                 g_clear_pointer(&fmembers, g_variant_unref);
                 g_clear_pointer(&fprops, g_variant_unref);
             }
@@ -363,7 +474,9 @@ gboolean virtmon_place(Virtmon *v, GError **error)
         GVariantBuilder out;
         g_variant_builder_init(&out, G_VARIANT_TYPE("a(iiduba(ssa{sv}))"));
         int right = 0;
-        gboolean placed = FALSE, rescaled = FALSE, any_monitor = FALSE;
+        gboolean placed = FALSE, rescaled = FALSE, any_monitor = FALSE, moved = FALSE;
+        int want_dx = 0, want_dy = 0;
+        gboolean have_layout = layout_load(&want_dx, &want_dy);
         GVariantIter liter;
         gint32 lx = 0, ly = 0;
         gdouble scale = 1.0;
@@ -404,6 +517,15 @@ gboolean virtmon_place(Virtmon *v, GError **error)
                 scale = want_scale;
                 rescaled = TRUE;
             }
+            /* Begitu pula letaknya: GNOME menaruhnya sendiri di tepi kanan
+             * karena nomor seri monitor ini berganti tiap sesi, jadi letak
+             * pilihan pengguna dipasang ulang di sini. */
+            if (is_virtual && have_layout &&
+                (lx != main_x + want_dx || ly != main_y + want_dy)) {
+                lx = main_x + want_dx;
+                ly = main_y + want_dy;
+                moved = TRUE;
+            }
             g_variant_builder_add(&out, "(iiduba(ssa{sv}))", lx, ly, scale, transform,
                                   primary, &mon);
             any_monitor = TRUE;
@@ -414,13 +536,14 @@ gboolean virtmon_place(Virtmon *v, GError **error)
         }
 
         gboolean ok = TRUE;
-        if (placed && rescaled) {
+        if (placed && (rescaled || moved)) {
             GVariant *reply = g_dbus_connection_call_sync(
                 v->bus, "org.gnome.Mutter.DisplayConfig", "/org/gnome/Mutter/DisplayConfig",
                 "org.gnome.Mutter.DisplayConfig", "ApplyMonitorsConfig",
                 g_variant_new("(uua(iiduba(ssa{sv}))a{sv})", serial, 1u, &out, NULL),
-                NULL, G_DBUS_CALL_FLAGS_NONE, 5000, NULL, error);
-            ok = reply != NULL;
+                NULL, G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL);
+            /* Gagal di sini bukan hal gawat: susunan yang sudah ada tetap
+             * dipakai, hanya letak atau skalanya belum sesuai keinginan. */
             g_clear_pointer(&reply, g_variant_unref);
         } else if (!placed) {
             /* Monitor virtual ditaruh di sebelah kanan layar paling kanan. */
@@ -430,9 +553,17 @@ gboolean virtmon_place(Virtmon *v, GError **error)
             g_variant_builder_init(&empty, G_VARIANT_TYPE_VARDICT);
             g_variant_builder_add(&mon, "(ssa{sv})", virt, info ? info->mode : "", &empty);
 
-            /* Di mesin tanpa layar sama sekali (misalnya Jetson headless),
+            /* Letak terakhir yang dipilih pengguna dipakai lagi; kalau belum
+             * pernah ada, monitornya ditaruh di tepi kanan.
+             *
+             * Di mesin tanpa layar sama sekali (misalnya Jetson headless),
              * monitor virtual ini satu-satunya, jadi dia yang jadi utama. */
-            g_variant_builder_add(&out, "(iiduba(ssa{sv}))", right, 0, want_scale, 0u,
+            int vx = right, vy = 0, dx = 0, dy = 0;
+            if (any_monitor && layout_load(&dx, &dy)) {
+                vx = main_x + dx;
+                vy = main_y + dy;
+            }
+            g_variant_builder_add(&out, "(iiduba(ssa{sv}))", vx, vy, want_scale, 0u,
                                   !any_monitor, &mon);
 
             GVariant *reply = g_dbus_connection_call_sync(
@@ -461,6 +592,11 @@ gboolean virtmon_place(Virtmon *v, GError **error)
         g_variant_unref(logical);
         g_variant_unref(props);
         g_variant_unref(state);
+        if (ok && !v->watch)
+            v->watch = g_dbus_connection_signal_subscribe(
+                v->bus, "org.gnome.Mutter.DisplayConfig", "org.gnome.Mutter.DisplayConfig",
+                "MonitorsChanged", "/org/gnome/Mutter/DisplayConfig", NULL,
+                G_DBUS_SIGNAL_FLAGS_NONE, on_monitors_changed, v, NULL);
         return ok;
     }
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
@@ -472,6 +608,8 @@ void virtmon_close(Virtmon *v)
 {
     if (!v)
         return;
+    if (v->bus && v->watch)
+        g_dbus_connection_signal_unsubscribe(v->bus, v->watch);
     if (v->bus && v->rd_session) {
         g_dbus_connection_call_sync(v->bus, MUTTER_RD, v->rd_session, MUTTER_RD ".Session",
                                     "Stop", NULL, NULL, G_DBUS_CALL_FLAGS_NONE, 2000, NULL, NULL);

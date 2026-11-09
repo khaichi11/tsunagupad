@@ -145,8 +145,10 @@ tsunagupad share --second 1280x800
 
 GNOME mendapat satu monitor tambahan yang tidak tercolok kabel apa pun. Jendela
 bisa diseret ke sana, dan penunjuk dari laptop ikut menyeberang lalu digambar ke
-dalam videonya, jadi rasanya seperti layar biasa. Atur sekali posisinya di
-Pengaturan, Tampilan, dan GNOME mengingat letaknya.
+dalam videonya, jadi rasanya seperti layar biasa. Atur sekali letaknya di
+Pengaturan, Tampilan, dan sesi berikutnya menaruhnya di situ lagi: GNOME memberi
+monitor ini nomor seri baru tiap sesi sehingga susunan simpanannya sendiri tidak
+pernah cocok, jadi letaknya dicatat di `~/.config/tsunagupad/second-screen`.
 
 Ukuran yang diminta itulah luas desktop yang didapat iPad. `--scale` mengatur
 besar tampilannya: bawaannya `1`, jadi layar 1280x800 benar-benar seluas 1280

@@ -144,7 +144,10 @@ tsunagupad share --second 1280x800
 GNOME gains a monitor that no cable is attached to. Windows can be dragged onto
 it, and the pointer from the laptop crosses onto it and is drawn into the
 picture, so it behaves like any other screen. Drag it into place once in
-Settings, Displays, and GNOME remembers where it sits.
+Settings, Displays, and the next session puts it back there: GNOME gives this
+monitor a new serial number every time and so cannot match its own saved
+layouts, which is why the position is kept in
+`~/.config/tsunagupad/second-screen` instead.
 
 The size is the desktop the iPad gets. `--scale` changes how large everything
 on it looks: `1` by default, so a 1280x800 screen really is 1280 by 800 points
