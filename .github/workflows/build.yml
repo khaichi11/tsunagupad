@@ -1,0 +1,134 @@
+# Membangun dan menguji Tsunagu-Pad untuk Ubuntu (.deb) dan Windows (pemasang .exe).
+# Setiap tag v* juga menerbitkan keduanya di halaman Releases.
+name: build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Paket build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config dpkg-dev \
+            libglib2.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libsoup-3.0-dev \
+            libjson-glib-dev libqrencode-dev libx11-dev libxtst-dev libpipewire-0.3-dev \
+            libgstreamer-plugins-bad1.0-0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-nice
+      - name: Build
+        run: make -j"$(nproc)"
+      - name: Uji kanal aman (kode akses, enkripsi, anti-replay, batas percobaan)
+        run: |
+          ./build/tsunagupad share --test-source --encoder cpu --port 18765 > share.log 2>&1 &
+          for i in $(seq 1 60); do grep -q '"ready"' share.log && break; sleep 0.5; done
+          node tool/test_channel.mjs 18765 "$HOME/.config/tsunagupad/token"
+          kill %1
+      - name: Paket .deb
+        run: tool/build_deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tsunagupad-ubuntu
+          path: dist/*.deb
+
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          path-type: inherit
+          install: >-
+            git make zip unzip
+          pacboy: >-
+            gcc:p pkgconf:p cmake:p ninja:p python:p ntldd:p nsis:p
+            gstreamer:p gst-plugins-base:p gst-plugins-good:p gst-plugins-bad:p gst-plugins-ugly:p
+            gst-libav:p libnice:p libsoup3:p json-glib:p qrencode:p libplist:p openssl:p glib-networking:p
+      - name: Build dan pemasang
+        run: windows/build.sh
+      - name: Pasang tanpa tampilan
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist/windows/Tsunagu-Pad-*-setup.exe | Select-Object -First 1
+          Start-Process -Wait -FilePath $setup.FullName -ArgumentList '/S', '/NOVDD'
+          $exe = "$env:ProgramFiles\Tsunagu-Pad\bin\tsunagupad.exe"
+          if (-not (Test-Path $exe)) { throw "tsunagupad.exe tidak terpasang" }
+          & $exe --version
+          & $exe capabilities
+          & $exe probe
+          & $exe hotspot status
+          "hotspot status: kode $LASTEXITCODE"
+          # Panel di area notifikasi harus tetap hidup setelah dimulai.
+          $tray = Start-Process -FilePath "$env:ProgramFiles\Tsunagu-Pad\bin\tsunagupad-tray.exe" `
+                    -ArgumentList '--autostart' -PassThru
+          Start-Sleep -Seconds 8
+          if ($tray.HasExited) { throw "panel berhenti sendiri (kode $($tray.ExitCode))" }
+          Stop-Process -Id $tray.Id -Force
+          & $exe service status
+          Get-NetFirewallRule -DisplayName 'Tsunagu-Pad*' | Format-Table DisplayName, Enabled, Direction
+      - name: Uji kanal aman pada program yang terpasang
+        shell: pwsh
+        run: |
+          $exe = "$env:ProgramFiles\Tsunagu-Pad\bin\tsunagupad.exe"
+          $p = Start-Process -FilePath $exe -ArgumentList 'share', '--test-source', '--encoder', 'auto', '--port', '18765' `
+                 -RedirectStandardOutput share.log -RedirectStandardError share.err -PassThru -NoNewWindow
+          for ($i = 0; $i -lt 120; $i++) {
+            if ((Test-Path share.log) -and (Select-String -Path share.log -Pattern '"ready"' -Quiet)) { break }
+            Start-Sleep -Milliseconds 500
+          }
+          Get-Content share.log, share.err -ErrorAction SilentlyContinue
+          node tool/test_channel.mjs 18765 "$env:LOCALAPPDATA\tsunagupad\token"
+          $rc = $LASTEXITCODE
+          Stop-Process -Id $p.Id -Force
+          exit $rc
+      - name: Hapus tanpa tampilan
+        shell: pwsh
+        run: |
+          Start-Process -Wait -FilePath "$env:ProgramFiles\Tsunagu-Pad\uninstall.exe" -ArgumentList '/S', "_?=$env:ProgramFiles\Tsunagu-Pad"
+          Remove-Item -Recurse -Force "$env:ProgramFiles\Tsunagu-Pad" -ErrorAction SilentlyContinue
+          if (Get-Service TsunaguPad -ErrorAction SilentlyContinue) { throw "layanan masih ada" }
+          if (Get-NetFirewallRule -DisplayName 'Tsunagu-Pad*' -ErrorAction SilentlyContinue) { throw "aturan firewall masih ada" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tsunagupad-windows
+          path: |
+            dist/windows/*.exe
+            dist/windows/*.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - name: Terbitkan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "Tsunagu-Pad ${GITHUB_REF_NAME#v}" \
+            --notes "Ubuntu: tsunagupad_*.deb. Windows: Tsunagu-Pad-*-setup.exe (atau arsip .zip portabel)." \
+            out/tsunagupad-ubuntu/*.deb out/tsunagupad-windows/*.exe out/tsunagupad-windows/*.zip
