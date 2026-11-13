@@ -1,13 +1,18 @@
 # Third party notices
 
-Tsunagu-Pad is licensed under the MIT License (see `LICENSE`). It ships no third
-party source code, binaries, artwork, fonts, or trademarks. The components below
-are installed from your Linux distribution and stay under their own licenses.
+Tsunagu-Pad is licensed under the MIT License (see `LICENSE`). This repository
+contains no third party source code, binaries, artwork, fonts, or trademarks. On
+Ubuntu the components below are installed from your Linux distribution. The
+Windows installer, which `windows/build.sh` builds, does carry binaries of
+third party components; they are listed in [Windows installer](#windows-installer)
+and stay under their own licenses.
 
 Tsunagu-Pad memakai Lisensi MIT (lihat `LICENSE`). Repository ini tidak
-menyertakan kode, binary, gambar, font, maupun merek pihak ketiga. Komponen di
-bawah ini dipasang dari distribusi Linux Anda dan tetap memakai lisensinya
-masing-masing.
+menyertakan kode, binary, gambar, font, maupun merek pihak ketiga. Di Ubuntu,
+komponen di bawah ini dipasang dari distribusi Linux Anda. Pemasang Windows yang
+dibuat `windows/build.sh` memang membawa binary komponen pihak ketiga; daftarnya
+ada di bagian [Windows installer](#windows-installer), dan semuanya tetap memakai
+lisensinya masing-masing.
 
 ## Linked libraries (dynamic linking)
 
@@ -44,7 +49,17 @@ those pieces together and the behaviour that comes out of it:
   and the small web server and signalling;
 - the page in `web/`: the client the iPad actually runs in Safari;
 - the GNOME Shell extension in `extension/`, the hotspot and installer scripts
-  in `system/`, and the animations in `docs/`.
+  in `system/`, and the animations in `docs/`;
+- the Windows port in `src/win/`, `tray/`, and `windows/`: DXGI capture and the
+  Windows encoders, input through `SendInput` and Windows Ink synthetic pens,
+  the second screen driven through the Windows display configuration API, the
+  service for the sign-in screen, the tray panel, and the installer;
+- the secure channel in `src/crypto.c` and `web/secure.js`. SHA-256 (FIPS
+  180-4), HMAC (RFC 2104), and ChaCha20 (RFC 8439) are published standards; the
+  C side uses GLib's HMAC-SHA256 and the ChaCha20 written here, and the page
+  side implements all three itself because Safari offers no `crypto.subtle` on
+  a plain `http` page. The protocol around them, challenge-response login, per
+  direction keys, and sequence numbers, is the design claimed here.
 
 Using a library is not the same as claiming it. A program that speaks HTTP did
 not invent HTTP; this one did not invent WebRTC. The work claimed here is the
@@ -80,10 +95,43 @@ The extension imports the public GNOME Shell and GJS modules at runtime
 The panel button uses icon names from the system icon theme rather than bundled
 artwork, so no icon files are included.
 
+## Windows installer
+
+The Windows installer is built from the same MIT licensed code, and in addition
+carries the following programs and libraries so that nothing has to be
+downloaded during installation. Their license texts, and where to obtain the
+exact corresponding source code, are installed in the `licenses` folder
+(`licenses/SOURCES.txt` lists every package and version).
+
+| Component | License | Use |
+|---|---|---|
+| GStreamer, its plugins, GLib, libsoup, JSON-GLib, libqrencode, libnice, and their dependencies, as built by the MSYS2 project | LGPL-2.1-or-later and others | Screen capture, encoding, WebRTC, the web server |
+| x264 | GPL-2.0-or-later | Software H.264 encoder used when no hardware encoder works |
+| FFmpeg (gst-libav) | LGPL-2.1-or-later, GPL-2.0-or-later as built by MSYS2 | Audio and video decoding for AirPlay |
+| OpenSSL, libsrtp, usrsctp | Apache-2.0, BSD-3-Clause | DTLS and SRTP for WebRTC |
+| UxPlay | GPL-3.0-or-later | Receives AirPlay screen mirroring from the iPad; runs as a separate program |
+| Virtual Display Driver | MIT | The monitor with no cable used for the second screen |
+
+These are separate files (DLLs, executables, and a driver package) used through
+their public interfaces, or separate programs started as processes; no code
+from them is copied into the files of this repository. Each can be replaced by
+another build of the same version. The GPL applies to x264, FFmpeg as built,
+and UxPlay as distributed in the installer; the source locations for the exact
+versions are listed in `licenses/SOURCES.txt`, as those licenses require.
+
+The Virtual Display Driver is signed by SignPath Foundation on behalf of the
+Virtual Display Driver project. The installer verifies the SHA-256 checksum of
+the released archive before including it.
+
+Pemasang Windows dibuat dari kode MIT yang sama, ditambah program dan pustaka di
+atas supaya tidak ada yang perlu diunduh saat memasang. Teks lisensinya dan
+alamat kode sumber persisnya ikut terpasang di folder `licenses`.
+
 ## Trademarks
 
 Apple, iPad, iPadOS, Safari, Apple Pencil, and AirPlay are trademarks of Apple
-Inc. Ubuntu is a trademark of Canonical Ltd. GNOME is a trademark of the GNOME
+Inc. Ubuntu is a trademark of Canonical Ltd. Windows is a trademark of
+Microsoft Corporation. GNOME is a trademark of the GNOME
 Foundation. NVIDIA is a trademark of NVIDIA Corporation. Intel is a trademark of
 Intel Corporation. These names are used only to describe compatibility. This
 project is not affiliated with, endorsed by, or sponsored by any of them.

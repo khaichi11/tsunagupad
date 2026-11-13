@@ -1,8 +1,10 @@
 # Tsunagu-Pad
 
-Use an iPad as a touch display for Ubuntu, and show the iPad screen on Ubuntu.
-Everything runs on your own machine over the local network. Nothing is uploaded
-to any server, and no app has to be installed on the iPad.
+Use an iPad as a touch display for Ubuntu or Windows, and show the iPad screen
+on the computer. Everything runs on your own machine over the local network.
+Nothing is uploaded to any server, and no app has to be installed on the iPad.
+
+Windows users: see [Windows](#windows) for the installer and the tray panel.
 
 English | [Bahasa Indonesia](README.id.md)
 
@@ -83,12 +85,14 @@ it.
 
 ## Install
 
+On Windows, see [Windows](#windows). On Ubuntu:
+
 Download `tsunagupad_<version>_amd64.deb` from the
 [releases page](https://github.com/khaichi11/tsunagupad/releases) and open it,
 or install it from a terminal:
 
 ```bash
-sudo apt install ./tsunagupad_0.1.0_amd64.deb
+sudo apt install ./tsunagupad_0.2.0_amd64.deb
 ```
 
 That is the whole installation. Everything the program needs is listed as a
@@ -247,13 +251,140 @@ the iPad Home Screen first. The **iPad aktif di sesi berikutnya** switch in the
 panel decides whether this starts at the next login, and `make login-undo`
 reverts everything.
 
-Input from the iPad, including that password, travels over a WebSocket with no
-application-level encryption. Use a network you own with a strong Wi-Fi password.
+Input from the iPad, including that password, travels encrypted and
+authenticated (see [Security](#security)). Still, use a network you own with a
+strong Wi-Fi password.
 
 Options that cannot work are hidden automatically: `tsunagupad capabilities`
 prints the machine model and what was detected. The hotspot only appears when
 the Wi-Fi chip can be an access point while staying connected, and the encoder
 is chosen by trying each one on that machine.
+
+## Windows
+
+The same program runs on Windows 10 (version 1809 or newer) and Windows 11,
+64-bit. Every feature of the Ubuntu version has a Windows counterpart:
+
+| Ubuntu | Windows |
+|---|---|
+| GNOME Quick Settings button | Icon next to the clock, kept visible beside Quick Settings, opening a panel built like Windows 11 Quick Settings (also `Ctrl+Alt+I`) |
+| Capture through X11 or PipeWire | DXGI Desktop Duplication, on the GPU |
+| NVENC, Intel VA-API, x264 | NVENC, Intel Quick Sync, AMD AMF, Media Foundation, x264 |
+| Pen as a uinput tablet | Pen as a Windows Ink pen, with pressure (1024 levels) and tilt |
+| Second screen from Mutter's virtual monitor | Second screen from the Virtual Display Driver, a monitor with no cable |
+| UxPlay from the Ubuntu repositories | UxPlay built in and bundled, with its own mDNS, so Apple Bonjour is not needed |
+| Hotspot on a virtual `ap0` | Windows Mobile Hotspot, which also keeps the main Wi-Fi connected |
+| `make login-setup`, systemd user service | The Tsunagu-Pad service: the sign-in screen and the next session on the iPad |
+| UFW rules | Windows Firewall rules for the local subnet and Tailscale only |
+
+### Install on Windows
+
+Download `Tsunagu-Pad-<version>-setup.exe` from the
+[releases page](https://github.com/khaichi11/tsunagupad/releases) and run it.
+The installer carries everything it needs, so nothing is downloaded during
+installation. It asks for the administrator password once and offers four parts:
+
+- **Tsunagu-Pad** (required): the program, the tray panel, the iPad page,
+  AirPlay, and Windows Firewall rules that accept only the local subnet and
+  Tailscale (`100.64.0.0/10`).
+- **Second screen**: installs the Virtual Display Driver (MIT licensed, signed
+  by SignPath Foundation for the Virtual Display Driver project). Windows may
+  ask once whether to install this device software.
+- **Sign-in screen and next session**: a Windows service that does nothing
+  until the switch in the panel is turned on.
+- **`tsunagupad` in PATH**, for use from a terminal or over SSH.
+
+A portable `.zip` is also published for machines where installing is not
+possible; it has the program and AirPlay, but not the driver, the service, or
+the firewall rules.
+
+### Use on Windows
+
+Windows does not let other applications add tiles to its Quick Settings
+panel, so Tsunagu-Pad brings a panel that works the same way. Its icon sits
+next to the clock, beside the Quick Settings icons, and the installer keeps it
+visible instead of under the `^` arrow. Click it, or press `Ctrl+Alt+I`
+anywhere:
+
+- the **Tsunagu-Pad** tile turns sharing on and off, and its `>` part opens
+  every option (monitor, quality, a new access key, starting at sign-in);
+- **iPad ke Windows** switches to receiving AirPlay;
+- **Layar kedua** makes the iPad a second screen, with the size and scale
+  behind `>`;
+- **Hotspot** turns the hotspot on, with its name and password behind `>`;
+- **Sesi berikutnya** keeps the iPad on at the sign-in screen and the next
+  session;
+- **Kualitas** picks one of the five presets.
+
+When sharing, the panel shows the QR code; scan it with the iPad camera. The
+panel follows the dark or light theme of Windows. The Start menu also has
+*Tsunagu-Pad - Nyalakan atau matikan*, which can be pinned to Start or to the
+taskbar for a one click switch. The *Mobile hotspot* tile that Windows already
+has in Quick Settings controls the same hotspot that Tsunagu-Pad uses.
+
+- **Second screen.** Turn on *Jadikan iPad layar kedua*. Windows gains a
+  monitor while the iPad is connected and loses it again when Tsunagu-Pad
+  stops; windows left on it move back to the other screens. Drag it into place
+  once in Settings, System, Display, and the next session puts it back there.
+  From a terminal: `tsunagupad share --second 1280x800 --scale 1.5`. A size the
+  driver does not know yet is added by the service on first use.
+- **AirPlay.** Choose *iPad ke Windows*, then on the iPad open Control Center,
+  Screen Mirroring, and pick **Tsunagu-Pad Windows**.
+- **Hotspot.** *Hotspot langsung* turns on Windows Mobile Hotspot and the panel
+  shows its Wi-Fi QR code. The name and password can be changed from the menu.
+  Windows needs a Wi-Fi or Ethernet connection to share before it can start
+  the hotspot.
+- **Sign-in screen and next session.** *iPad aktif di sesi berikutnya* asks for
+  the administrator password, then the service shares the screen at the sign-in
+  screen, the lock screen, and UAC prompts, and keeps going after you sign in.
+  It uses a copy of your access key, so the iPad shortcut keeps working. This
+  is also how `tsunagupad on` works over SSH.
+- **Apple Pencil** reaches applications as a Windows Ink pen with pressure and
+  tilt, so Krita, Photoshop, OneNote, and Xournal++ draw with it as with a
+  tablet. Input into windows that run as administrator (Task Manager, installer
+  windows) is blocked by Windows unless the session comes from the service.
+
+The command line is the same as on Ubuntu, plus a few Windows commands:
+
+```
+tsunagupad share [--monitor N|primary|\\.\DISPLAY2] [--second WxH] [--scale S] [--quality Q]
+tsunagupad receive [--fullscreen]
+tsunagupad on | off | status
+tsunagupad hotspot on|off|status|config NAME   (password from standard input)
+tsunagupad monitors
+tsunagupad service status
+tsunagupad probe
+```
+
+### Build for Windows yourself
+
+Install [MSYS2](https://www.msys2.org), open the **UCRT64** terminal, install the
+packages listed at the top of [windows/build.sh](windows/build.sh), then:
+
+```bash
+git clone https://github.com/khaichi11/tsunagupad.git
+cd tsunagupad
+windows/build.sh        # dist/windows/Tsunagu-Pad-<version>-setup.exe
+```
+
+The script builds the program and UxPlay, collects the GStreamer plugins and
+DLLs, verifies the checksum of the Virtual Display Driver release, and runs
+NSIS. GitHub Actions runs the same script on every push, installs the result
+silently on a clean Windows machine, and tests the encrypted channel against
+the installed program.
+
+### Troubleshooting on Windows
+
+- `tsunagupad probe` lists the encoder that works. `TSUNAGUPAD_DEBUG=1` prints
+  each encoder that was tried and the GStreamer pipeline.
+- No picture on the iPad: check that the network is the same, and that the
+  Windows Firewall rules named *Tsunagu-Pad* exist (install again to restore
+  them). Networks marked *Public* are allowed by the rules, but only from the
+  local subnet.
+- `tsunagupad service status` shows whether the service is installed and on.
+- To remove everything, use Settings, Apps, Tsunagu-Pad, Uninstall. It removes
+  the service, the firewall rules, the PATH entry, and the virtual display
+  driver if Tsunagu-Pad installed it.
 
 ## Why it exists
 
@@ -317,14 +448,51 @@ stopped automatically when Tsunagu-Pad starts again.
 
 ## Security
 
-- The QR code and the address contain an access key. Anyone who has it can see
-  and control the Ubuntu screen, so do not share it.
-- The hotspot password is stored in `/etc/tsunagupad/hotspot.conf`, readable only
-  by root and the user who installed the program.
-- The hotspot runs DHCP and NAT on `10.88.0.0/24`. IP forwarding is restored to
-  its previous value when the hotspot stops.
-- Ports opened in UFW: `8765/tcp` for the page, `50000` to `50100/udp` for video,
-  and the AirPlay ports `7000,7001,7100/tcp` with `6000,6001,7011,5353/udp`.
+The same protections apply on Ubuntu and on Windows.
+
+- **The access key never travels over the network.** The QR code carries it
+  after `#` (`http://…:8765/#k=…`), the part of an address that a browser never
+  sends to the server. When the iPad connects, the computer sends a random
+  challenge and the iPad answers with HMAC-SHA256 of the key and both random
+  values. Older shortcuts with `?k=` still work; the page moves the key behind
+  `#` at once.
+- **Everything on the connection is encrypted and authenticated.** Keys for
+  this one connection are derived from the access key and the two random
+  values. Every message, in both directions, is encrypted with ChaCha20 and
+  carries an HMAC-SHA256 over its sequence number and content. A message that
+  was changed, replayed, or reordered closes the connection. Typing, including
+  a sign-in password, cannot be read by others on the network, commands cannot
+  be injected, and the DTLS fingerprints of the WebRTC video are authenticated
+  as well, so the video cannot be redirected. The implementation is
+  [src/crypto.c](src/crypto.c) and [web/secure.js](web/secure.js), checked
+  against the RFC test vectors and by [tool/test_channel.mjs](tool/test_channel.mjs)
+  in CI. It does not protect against someone who can change the page itself on
+  its way to the iPad, which is why a network you own matters.
+- **Local networks only.** Only loopback, private (`10/8`, `172.16/12`,
+  `192.168/16`), link-local, and Tailscale (`100.64/10`, `fc00::/7`) addresses
+  are served. `--allow-public` lifts this when it is really needed.
+- **Limits.** After five wrong keys within a minute, that address waits a
+  minute. WebSocket connections from pages of other sites (a different
+  `Origin`) are refused, messages are capped in size, and the page is served
+  with a Content Security Policy, `nosniff`, `no-referrer`, and no framing.
+- **You see who connects.** The panel (GNOME and Windows) shows a notification
+  with the address of every new device that takes control, and **Buat kode
+  akses baru** revokes the old key at once.
+- The hotspot password is stored in `/etc/tsunagupad/hotspot.conf` on Ubuntu,
+  readable only by root and the user who installed the program. On Windows it is
+  the Mobile Hotspot setting of Windows itself.
+- The Ubuntu hotspot runs DHCP and NAT on `10.88.0.0/24`. IP forwarding is
+  restored to its previous value when the hotspot stops.
+- Firewall: UFW on Ubuntu and Windows Firewall on Windows accept the page
+  (`8765/tcp`), the video (`50000` to `50100/udp`), and AirPlay
+  (`7000,7001,7100/tcp`, `6000,6001,7011,5353/udp`) only from private,
+  link-local, and Tailscale addresses.
+- Windows service: the copy of the access key and the session log live in
+  `%ProgramData%\TsunaguPad\session`, readable only by SYSTEM and
+  administrators. Turning the switch on or off needs administrator rights. The
+  service accepts commands only from this computer, and only a fixed set of
+  options (for example `--web-dir` is refused, so it cannot be told to serve
+  arbitrary files).
 
 ## Disclaimer
 
@@ -333,7 +501,8 @@ warranty. Use it at your own risk.
 
 The installer changes system settings: it installs packages, adds a hotspot
 service, opens firewall ports, relaxes the permission on `/dev/uinput` for the
-`input` group, and writes a polkit rule. Screen sharing gives anyone holding the
+`input` group, and writes a polkit rule. On Windows it adds firewall rules, and
+when selected a virtual display driver, a service, and a PATH entry. Screen sharing gives anyone holding the
 access key full control of your desktop, and the hotspot creates a Wi-Fi network
 from your machine. Review the scripts before running them, and make sure this
 kind of setup is allowed on the network you use.
@@ -358,7 +527,8 @@ parts are standards implemented by other people and which parts are the work
 claimed here.
 
 Apple, iPad, iPadOS, Safari, Apple Pencil, and AirPlay are trademarks of Apple
-Inc. This project is not affiliated with, endorsed by, or sponsored by Apple
+Inc. Windows is a trademark of Microsoft Corporation. This project is not affiliated with, endorsed by, or sponsored by Apple
 Inc., and contains no Apple software, artwork, or trademarks in its own files.
-Receiving AirPlay is performed by UxPlay, a separate program that you install
-from your distribution; this repository does not ship or bundle it.
+Receiving AirPlay is performed by UxPlay, a separate program: on Ubuntu you
+install it from your distribution, and the Windows installer carries a build of
+it with its license and source location. This repository does not contain it.

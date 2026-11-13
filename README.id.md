@@ -1,9 +1,12 @@
 # Tsunagu-Pad
 
-Pakai iPad sebagai layar sentuh untuk Ubuntu, dan tampilkan layar iPad di
-Ubuntu. Semuanya berjalan di komputer sendiri melalui jaringan lokal. Tidak ada
-data yang dikirim ke server mana pun, dan tidak ada aplikasi yang perlu dipasang
-di iPad.
+Pakai iPad sebagai layar sentuh untuk Ubuntu atau Windows, dan tampilkan layar
+iPad di komputer. Semuanya berjalan di komputer sendiri melalui jaringan lokal.
+Tidak ada data yang dikirim ke server mana pun, dan tidak ada aplikasi yang
+perlu dipasang di iPad.
+
+Pengguna Windows: lihat [Windows](#windows) untuk pemasang dan panel di area
+notifikasi.
 
 [English](README.md) | Bahasa Indonesia
 
@@ -84,12 +87,14 @@ di buffer.
 
 ## Pemasangan
 
+Di Windows, lihat [Windows](#windows). Di Ubuntu:
+
 Unduh `tsunagupad_<versi>_amd64.deb` dari
 [halaman rilis](https://github.com/khaichi11/tsunagupad/releases) lalu buka
 berkasnya, atau pasang lewat terminal:
 
 ```bash
-sudo apt install ./tsunagupad_0.1.0_amd64.deb
+sudo apt install ./tsunagupad_0.2.0_amd64.deb
 ```
 
 Sudah, itu saja pemasangannya. Semua yang dibutuhkan programnya terdaftar
@@ -249,13 +254,141 @@ QR tidak akan terlihat tanpa layar, jadi simpan dulu alamatnya di Layar Utama
 iPad. Sakelar **iPad aktif di sesi berikutnya** di panel menentukan apakah ini
 menyala saat login berikutnya, dan `make login-undo` mengembalikan semuanya.
 
-Input dari iPad, termasuk password itu, lewat WebSocket tanpa enkripsi aplikasi.
-Pakai jaringan milik sendiri dengan sandi Wi-Fi yang kuat.
+Input dari iPad, termasuk password itu, dikirim terenkripsi dan terautentikasi
+(lihat [Keamanan](#keamanan)). Tetap pakai jaringan milik sendiri dengan sandi
+Wi-Fi yang kuat.
 
 Pilihan yang tidak bisa dipakai disembunyikan otomatis: `tsunagupad capabilities`
 menampilkan model mesin dan hasil deteksinya. Hotspot hanya muncul kalau chip
 Wi-Fi bisa menjadi titik akses sambil tetap tersambung, dan encoder dipilih
 dengan mencobanya satu per satu di mesin itu.
+
+## Windows
+
+Program yang sama berjalan di Windows 10 (versi 1809 atau lebih baru) dan
+Windows 11, 64-bit. Setiap fitur versi Ubuntu punya padanannya di Windows:
+
+| Ubuntu | Windows |
+|---|---|
+| Tombol GNOME Quick Settings | Ikon di samping jam, selalu tampil di sebelah Quick Settings, membuka panel yang dibuat seperti Quick Settings Windows 11 (juga `Ctrl+Alt+I`) |
+| Tangkap layar lewat X11 atau PipeWire | DXGI Desktop Duplication, di GPU |
+| NVENC, Intel VA-API, x264 | NVENC, Intel Quick Sync, AMD AMF, Media Foundation, x264 |
+| Pena sebagai tablet uinput | Pena Windows Ink, dengan tekanan (1024 tingkat) dan kemiringan |
+| Layar kedua dari monitor virtual Mutter | Layar kedua dari Virtual Display Driver, monitor tanpa kabel |
+| UxPlay dari repositori Ubuntu | UxPlay ikut dibangun dan dibawa pemasang, dengan mDNS sendiri, jadi Bonjour Apple tidak perlu |
+| Hotspot di `ap0` virtual | Mobile Hotspot Windows, Wi-Fi utama tetap tersambung |
+| `make login-setup`, service systemd pengguna | Layanan Tsunagu-Pad: layar login dan sesi berikutnya di iPad |
+| Aturan UFW | Aturan Windows Firewall untuk subnet lokal dan Tailscale saja |
+
+### Pasang di Windows
+
+Unduh `Tsunagu-Pad-<versi>-setup.exe` dari
+[halaman rilis](https://github.com/khaichi11/tsunagupad/releases) lalu jalankan.
+Pemasang membawa semua yang dibutuhkan, jadi tidak ada yang diunduh saat
+memasang. Kata sandi administrator diminta sekali, dan ada empat bagian:
+
+- **Tsunagu-Pad** (wajib): program, panel di area notifikasi, halaman iPad,
+  AirPlay, dan aturan Windows Firewall yang hanya menerima subnet lokal dan
+  Tailscale (`100.64.0.0/10`).
+- **Layar kedua**: memasang Virtual Display Driver (lisensi MIT, ditandatangani
+  SignPath Foundation untuk proyek Virtual Display Driver). Windows mungkin
+  bertanya sekali apakah perangkat lunak perangkat ini boleh dipasang.
+- **Layanan layar login dan sesi berikutnya**: layanan Windows yang tidak
+  melakukan apa pun sampai sakelarnya dinyalakan di panel.
+- **`tsunagupad` di PATH**, untuk dipakai dari terminal atau lewat SSH.
+
+Tersedia juga arsip `.zip` portabel untuk mesin yang tidak boleh dipasangi
+program; isinya program dan AirPlay, tanpa driver, layanan, dan aturan firewall.
+
+### Pemakaian di Windows
+
+Windows tidak mengizinkan aplikasi lain menambah tombol ke panel Quick
+Settings-nya, jadi Tsunagu-Pad membawa panel yang cara kerjanya sama. Ikonnya
+ada di samping jam, di sebelah ikon Quick Settings, dan dibuat selalu tampil,
+tidak tersembunyi di balik tanda `^`. Klik ikonnya, atau tekan `Ctrl+Alt+I` dari
+mana saja:
+
+- kotak **Tsunagu-Pad** menyalakan dan mematikan berbagi layar, dan bagian `>`
+  membuka semua pilihan (monitor, kualitas, kode akses baru, mulai otomatis
+  saat masuk Windows);
+- **iPad ke Windows** beralih ke penerima AirPlay;
+- **Layar kedua** menjadikan iPad layar kedua, dengan ukuran dan skala di `>`;
+- **Hotspot** menyalakan hotspot, dengan nama dan kata sandinya di `>`;
+- **Sesi berikutnya** membuat iPad tetap aktif di layar login dan sesi
+  berikutnya;
+- **Kualitas** memilih salah satu dari lima preset.
+
+Saat berbagi layar, panel menampilkan QR; pindai dengan kamera iPad. Panelnya
+mengikuti tema gelap atau terang Windows. Di menu Start juga ada
+*Tsunagu-Pad - Nyalakan atau matikan*, yang bisa di-pin ke Start atau taskbar
+untuk menyalakan dan mematikan dengan sekali klik. Kotak *Mobile hotspot* yang
+sudah ada di Quick Settings Windows mengendalikan hotspot yang sama dengan yang
+dipakai Tsunagu-Pad.
+
+- **Layar kedua.** Nyalakan *Jadikan iPad layar kedua*. Windows mendapat satu
+  monitor selama iPad tersambung dan kehilangannya lagi saat Tsunagu-Pad
+  berhenti; jendela yang tertinggal di sana dipindah ke layar lain. Seret
+  letaknya sekali di Pengaturan, Sistem, Layar, dan sesi berikutnya monitor itu
+  kembali ke tempat yang sama. Dari terminal:
+  `tsunagupad share --second 1280x800 --scale 1.5`. Ukuran yang belum dikenal
+  driver ditambahkan oleh layanan saat pertama dipakai.
+- **AirPlay.** Pilih *iPad ke Windows*, lalu di iPad buka Pusat Kontrol,
+  Pencerminan Layar, dan pilih **Tsunagu-Pad Windows**.
+- **Hotspot.** *Hotspot langsung* menyalakan Mobile Hotspot Windows dan panel
+  menampilkan QR Wi-Fi-nya. Nama dan kata sandinya bisa diubah dari menu.
+  Windows butuh sambungan Wi-Fi atau Ethernet untuk dibagikan sebelum
+  hotspotnya bisa menyala.
+- **Layar login dan sesi berikutnya.** *iPad aktif di sesi berikutnya* meminta
+  kata sandi administrator, lalu layanan membagikan layar di layar login, layar
+  kunci, dan jendela UAC, dan tetap berjalan setelah Anda masuk. Layanan memakai
+  salinan kode akses Anda, jadi shortcut di iPad tetap berlaku. Lewat jalur ini
+  pula `tsunagupad on` bekerja dari SSH.
+- **Apple Pencil** sampai ke aplikasi sebagai pena Windows Ink dengan tekanan
+  dan kemiringan, jadi Krita, Photoshop, OneNote, dan Xournal++ menggambar
+  seperti dengan tablet. Masukan ke jendela yang berjalan sebagai administrator
+  (Task Manager, jendela pemasang) diblokir Windows, kecuali sesinya berasal dari
+  layanan.
+
+Baris perintahnya sama seperti di Ubuntu, ditambah beberapa perintah Windows:
+
+```
+tsunagupad share [--monitor N|primary|\\.\DISPLAY2] [--second WxH] [--scale S] [--quality Q]
+tsunagupad receive [--fullscreen]
+tsunagupad on | off | status
+tsunagupad hotspot on|off|status|config NAMA   (kata sandi dari input standar)
+tsunagupad monitors
+tsunagupad service status
+tsunagupad probe
+```
+
+### Bangun sendiri untuk Windows
+
+Pasang [MSYS2](https://www.msys2.org), buka terminal **UCRT64**, pasang paket yang
+tercantum di bagian atas [windows/build.sh](windows/build.sh), lalu:
+
+```bash
+git clone https://github.com/khaichi11/tsunagupad.git
+cd tsunagupad
+windows/build.sh        # dist/windows/Tsunagu-Pad-<versi>-setup.exe
+```
+
+Skrip itu membangun program dan UxPlay, mengumpulkan plugin GStreamer dan
+DLL-nya, memeriksa checksum rilis Virtual Display Driver, lalu menjalankan NSIS.
+GitHub Actions menjalankan skrip yang sama di setiap push, memasang hasilnya
+tanpa tampilan di Windows yang bersih, lalu menguji kanal terenkripsi pada
+program yang terpasang.
+
+### Penyelesaian masalah di Windows
+
+- `tsunagupad probe` menampilkan encoder yang jalan. `TSUNAGUPAD_DEBUG=1`
+  mencetak setiap encoder yang dicoba dan pipeline GStreamer-nya.
+- Gambar tidak muncul di iPad: pastikan jaringannya sama, dan aturan Windows
+  Firewall bernama *Tsunagu-Pad* ada (pasang ulang untuk memulihkannya).
+  Jaringan berlabel *Public* tetap diizinkan, tetapi hanya dari subnet lokal.
+- `tsunagupad service status` menunjukkan apakah layanannya terpasang dan menyala.
+- Untuk menghapus semuanya: Pengaturan, Aplikasi, Tsunagu-Pad, Uninstall.
+  Layanan, aturan firewall, entri PATH, dan driver layar virtual (bila dulu
+  dipasang oleh Tsunagu-Pad) ikut dihapus.
 
 ## Kenapa ini dibuat
 
@@ -318,15 +451,50 @@ ulang, dihentikan otomatis saat Tsunagu-Pad dinyalakan kembali.
 
 ## Keamanan
 
-- QR dan alamat sambungan memuat kode akses. Siapa pun yang memilikinya dapat
-  melihat dan mengendalikan layar Ubuntu, jadi jangan dibagikan.
-- Kata sandi hotspot disimpan di `/etc/tsunagupad/hotspot.conf`, hanya bisa
-  dibaca root dan pengguna yang memasang program.
-- Hotspot menjalankan DHCP dan NAT pada `10.88.0.0/24`. Nilai IP forwarding
-  dikembalikan seperti semula saat hotspot dimatikan.
-- Port yang dibuka di UFW: `8765/tcp` untuk halaman, `50000` sampai `50100/udp`
-  untuk video, serta port AirPlay `7000,7001,7100/tcp` dan
-  `6000,6001,7011,5353/udp`.
+Perlindungan yang sama berlaku di Ubuntu dan Windows.
+
+- **Kode akses tidak pernah lewat jaringan.** QR membawanya setelah tanda `#`
+  (`http://…:8765/#k=…`), bagian alamat yang tidak pernah dikirim browser ke
+  server. Saat iPad menyambung, komputer mengirim tantangan acak dan iPad
+  menjawab dengan HMAC-SHA256 dari kode akses dan kedua nilai acak itu. Shortcut
+  lama dengan `?k=` tetap berlaku; halamannya langsung memindahkan kode ke
+  belakang `#`.
+- **Semua isi sambungan dienkripsi dan diautentikasi.** Kunci khusus untuk satu
+  sambungan diturunkan dari kode akses dan kedua nilai acak. Setiap pesan, dua
+  arah, dienkripsi ChaCha20 dan membawa HMAC-SHA256 atas nomor urut dan isinya.
+  Pesan yang diubah, diputar ulang, atau tertukar urutannya memutus sambungan.
+  Ketikan, termasuk kata sandi di layar login, tidak bisa dibaca orang lain di
+  jaringan, perintah tidak bisa disisipkan, dan sidik jari DTLS video WebRTC ikut
+  terautentikasi sehingga videonya tidak bisa dibelokkan. Implementasinya ada di
+  [src/crypto.c](src/crypto.c) dan [web/secure.js](web/secure.js), dicek dengan
+  vektor uji RFC dan oleh [tool/test_channel.mjs](tool/test_channel.mjs) di CI.
+  Yang tidak bisa dicegah: orang yang mampu mengubah halaman itu sendiri dalam
+  perjalanannya ke iPad. Karena itu jaringan milik sendiri tetap penting.
+- **Hanya jaringan lokal.** Yang dilayani hanya alamat loopback, privat
+  (`10/8`, `172.16/12`, `192.168/16`), link-local, dan Tailscale (`100.64/10`,
+  `fc00::/7`). `--allow-public` membuka batas ini bila memang perlu.
+- **Batasan.** Setelah lima kode salah dalam satu menit, alamat itu harus
+  menunggu satu menit. Sambungan WebSocket dari halaman situs lain (`Origin`
+  berbeda) ditolak, ukuran pesan dibatasi, dan halamannya dikirim dengan Content
+  Security Policy, `nosniff`, `no-referrer`, dan larangan dibingkai situs lain.
+- **Anda melihat siapa yang menyambung.** Panel (GNOME maupun Windows) memberi
+  notifikasi berisi alamat setiap perangkat baru yang memegang kendali, dan
+  **Buat kode akses baru** langsung mencabut kode lama.
+- Kata sandi hotspot di Ubuntu disimpan di `/etc/tsunagupad/hotspot.conf`, hanya
+  bisa dibaca root dan pengguna yang memasang program. Di Windows itu adalah
+  pengaturan Mobile Hotspot milik Windows sendiri.
+- Hotspot Ubuntu menjalankan DHCP dan NAT pada `10.88.0.0/24`. Nilai IP
+  forwarding dikembalikan seperti semula saat hotspot dimatikan.
+- Firewall: UFW di Ubuntu dan Windows Firewall di Windows menerima halaman
+  (`8765/tcp`), video (`50000` sampai `50100/udp`), dan AirPlay
+  (`7000,7001,7100/tcp`, `6000,6001,7011,5353/udp`) hanya dari alamat privat,
+  link-local, dan Tailscale.
+- Layanan Windows: salinan kode akses dan log sesinya ada di
+  `%ProgramData%\TsunaguPad\session`, hanya bisa dibaca SYSTEM dan
+  administrator. Menyalakan atau mematikan sakelarnya butuh hak administrator.
+  Layanan hanya menerima perintah dari komputer ini sendiri, dan hanya
+  sekumpulan opsi tertentu (misalnya `--web-dir` ditolak, sehingga ia tidak bisa
+  disuruh menyajikan berkas sembarangan).
 
 ## Penafian
 
@@ -335,7 +503,8 @@ dan tanpa jaminan apa pun. Pemakaian sepenuhnya menjadi tanggung jawab Anda.
 
 Pemasang mengubah pengaturan sistem: memasang paket, menambah layanan hotspot,
 membuka port firewall, melonggarkan izin `/dev/uinput` untuk grup `input`, dan
-menulis aturan polkit. Berbagi layar memberi kendali penuh atas desktop kepada
+menulis aturan polkit. Di Windows pemasang menambah aturan firewall, dan bila
+dipilih juga driver layar virtual, sebuah layanan, dan entri PATH. Berbagi layar memberi kendali penuh atas desktop kepada
 siapa pun yang memegang kode akses, dan hotspot membuat jaringan Wi-Fi dari
 komputer Anda. Periksa dulu isi skripnya sebelum dijalankan, dan pastikan
 pemakaian seperti ini diizinkan di jaringan yang Anda pakai.
@@ -360,7 +529,10 @@ terang bagian mana yang berupa standar buatan orang lain dan bagian mana yang
 memang pekerjaan di repository ini.
 
 Apple, iPad, iPadOS, Safari, Apple Pencil, dan AirPlay adalah merek Apple Inc.
+Windows adalah merek Microsoft Corporation.
 Proyek ini tidak berafiliasi, tidak didukung, dan tidak disponsori oleh Apple
 Inc., serta tidak memuat perangkat lunak, gambar, maupun merek Apple di
-berkasnya sendiri. Penerimaan AirPlay dikerjakan UxPlay, program terpisah yang
-Anda pasang dari distribusi Anda; repository ini tidak menyertakannya.
+berkasnya sendiri. Penerimaan AirPlay dikerjakan UxPlay, program terpisah: di
+Ubuntu Anda memasangnya dari distribusi, dan pemasang Windows membawa hasil
+build-nya lengkap dengan lisensi dan alamat kode sumbernya. Repository ini
+tidak memuatnya.
