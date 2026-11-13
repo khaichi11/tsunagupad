@@ -45,6 +45,7 @@ typedef struct {
     char *encoder;              /* auto | nvidia | intel | cpu */
     char *pen_mode;             /* auto | tablet | mouse */
     gboolean allow_input;
+    gboolean allow_public;      /* terima iPad dari alamat publik, bukan hanya jaringan lokal/Tailscale */
     gboolean pick_screen;       /* lupakan pilihan layar yang tersimpan, tanya lagi */
     gboolean test_source;
     char *web_dir;

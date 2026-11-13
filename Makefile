@@ -29,7 +29,7 @@ TRAY_CFLAGS   := $(shell $(PKG_CONFIG) --cflags glib-2.0 json-glib-1.0) -municod
 TRAY_LIBS     := $(shell $(PKG_CONFIG) --libs glib-2.0 json-glib-1.0) \
                  -liphlpapi -lshell32 -luser32 -lgdi32 -lws2_32 -ladvapi32
 
-WIN_SRC := src/main.c src/server.c src/share.c src/encoder.c src/playout.c src/qr.c \
+WIN_SRC := src/main.c src/server.c src/share.c src/encoder.c src/playout.c src/qr.c src/crypto.c \
            $(wildcard src/win/*.c)
 WIN_OBJ := $(WIN_SRC:src/%.c=build/win/%.o)
 comma := ,
@@ -42,7 +42,7 @@ build/tsunagupad.exe: $(WIN_OBJ) build/win/tsunagupad.res.o
 build/tsunagupad-tray.exe: tray/tray.c build/win/tray.res.o
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(TRAY_CFLAGS) $(LDFLAGS) -mwindows -o $@ $^ $(TRAY_LIBS)
 
-build/win/%.o: src/%.c src/tsunagupad.h src/webrtc-lite.h src/win/win.h
+build/win/%.o: src/%.c src/tsunagupad.h src/webrtc-lite.h src/crypto.h src/win/win.h
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DAEMON_CFLAGS) -c -o $@ $<
 
@@ -91,7 +91,7 @@ all: build/tsunagupad
 build/tsunagupad: $(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-build/%.o: src/%.c src/tsunagupad.h src/webrtc-lite.h | build
+build/%.o: src/%.c src/tsunagupad.h src/webrtc-lite.h src/crypto.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
 build:

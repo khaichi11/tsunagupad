@@ -125,12 +125,22 @@ if [[ $hotspot_was_active -eq 1 ]]; then
 fi
 
 if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
-    say "Membuka port di firewall (UFW)"
-    ufw allow 8765/tcp comment 'Tsunagu-Pad halaman iPad'
-    ufw allow 50000:50100/udp comment 'Tsunagu-Pad video WebRTC'
-    ufw allow 7000,7001,7100/tcp comment 'Tsunagu-Pad AirPlay'
-    ufw allow 6000,6001,7011/udp comment 'Tsunagu-Pad AirPlay'
-    ufw allow 5353/udp comment 'Tsunagu-Pad mDNS (AirPlay)'
+    say "Membuka port di firewall (UFW), hanya untuk jaringan lokal dan Tailscale"
+    # Versi lama membuka port untuk alamat mana pun; aturan itu diganti dengan
+    # aturan yang hanya menerima jaringan privat, link-local, dan Tailscale
+    # (100.64.0.0/10). Daemon sendiri juga menolak alamat publik.
+    ufw delete allow 8765/tcp >/dev/null 2>&1 || true
+    ufw delete allow 50000:50100/udp >/dev/null 2>&1 || true
+    ufw delete allow 7000,7001,7100/tcp >/dev/null 2>&1 || true
+    ufw delete allow 6000,6001,7011/udp >/dev/null 2>&1 || true
+    ufw delete allow 5353/udp >/dev/null 2>&1 || true
+    for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fe80::/10 fc00::/7; do
+        ufw allow from "$net" to any port 8765 proto tcp comment 'Tsunagu-Pad halaman iPad' >/dev/null
+        ufw allow from "$net" to any port 50000:50100 proto udp comment 'Tsunagu-Pad video WebRTC' >/dev/null
+        ufw allow from "$net" to any port 7000,7001,7100 proto tcp comment 'Tsunagu-Pad AirPlay' >/dev/null
+        ufw allow from "$net" to any port 6000,6001,7011 proto udp comment 'Tsunagu-Pad AirPlay' >/dev/null
+        ufw allow from "$net" to any port 5353 proto udp comment 'Tsunagu-Pad mDNS (AirPlay)' >/dev/null
+    done
 fi
 
 say "Komponen sistem Tsunagu-Pad terpasang"

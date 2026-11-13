@@ -19,9 +19,16 @@ const store = {
   set(key, value) { try { localStorage.setItem(key, value); } catch { /* mode privat */ } },
 };
 
+/* Kode akses dibawa QR di fragmen (#k=…), yang tidak pernah dikirim browser
+   ke server. Alamat lama dengan ?k=… tetap diterima, lalu kodenya dipindah ke
+   fragmen supaya muat ulang berikutnya tidak lagi mengirimnya lewat jaringan. */
 const query = new URLSearchParams(location.search);
-const token = query.get('k') || store.get('tsunagupad.token') || '';
-if (query.get('k')) store.set('tsunagupad.token', token);
+const fragment = new URLSearchParams(location.hash.slice(1));
+const token = fragment.get('k') || query.get('k') || store.get('tsunagupad.token') || '';
+if (fragment.get('k') || query.get('k')) store.set('tsunagupad.token', token);
+if (query.get('k')) {
+  try { history.replaceState(null, '', `${location.pathname}#k=${encodeURIComponent(token)}`); } catch { /* biarkan */ }
+}
 
 /* ---------- bahasa ---------- */
 
@@ -47,6 +54,8 @@ const STRINGS = {
     preparing: 'Preparing the video...',
     ice_failed: 'The video could not connect. Make sure the iPad is on the same network as {host} and that the firewall is open {fw}.',
     tap_to_play: 'Tap to show the {host} screen.',
+    locked: 'Too many wrong access keys from this iPad. Wait a minute, then try again.',
+    forbidden: 'This address is not allowed to connect. Use the local network, the Tsunagu-Pad hotspot, or Tailscale.',
     retry: 'Try again',
     takeover: 'Take over',
     play: 'Start',
@@ -72,6 +81,8 @@ const STRINGS = {
     preparing: 'Menyiapkan video...',
     ice_failed: 'Video tidak tersambung. Pastikan iPad satu jaringan dengan {host} dan firewall sudah dibuka {fw}.',
     tap_to_play: 'Ketuk untuk menampilkan layar {host}.',
+    locked: 'Terlalu banyak kode akses yang salah dari iPad ini. Tunggu satu menit, lalu coba lagi.',
+    forbidden: 'Alamat ini tidak diizinkan menyambung. Pakai jaringan lokal, hotspot Tsunagu-Pad, atau Tailscale.',
     retry: 'Coba lagi',
     takeover: 'Ambil alih',
     play: 'Mulai',
@@ -110,6 +121,8 @@ function applyLanguage() {
 }
 
 let ws = null;
+let channel = null;   // kanal terenkripsi; ada setelah tantangan server dijawab
+let ready = false;    // server sudah menerima jawaban (pesan "welcome" datang)
 let pc = null;
 let info = null;
 let chain = Promise.resolve();
@@ -152,8 +165,9 @@ $('hint').hidden = standalone;
 
 /* ---------- sambungan ---------- */
 
+/* Semua pesan setelah login dienkripsi dan diautentikasi (web/secure.js). */
 function send(msg) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  if (ws && ws.readyState === WebSocket.OPEN && channel && ready) ws.send(channel.seal(msg));
 }
 
 function connect() {
@@ -170,21 +184,54 @@ function connect() {
   showKey('connecting', { spinner: true });
 
   const sock = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+  sock.binaryType = 'arraybuffer';
   ws = sock;
-  sock.onopen = () => send({ type: 'hello', token });
+  channel = null;
+  ready = false;
+  let lastError = null;
   sock.onmessage = (ev) => {
-    let msg;
-    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (ws !== sock) return;
+    if (typeof ev.data === 'string') {
+      /* Sebelum login hanya ada dua pesan teks: tantangan dan pesan galat. */
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.type === 'challenge' && !channel) {
+        try {
+          channel = new TsunaguSecure.Channel(token, msg.nonce);
+        } catch {
+          sock.close();
+          return;
+        }
+        sock.send(JSON.stringify(channel.hello));
+      } else if (msg.type === 'error') {
+        lastError = msg.message;
+      }
+      return;
+    }
+    const msg = channel ? channel.open(ev.data) : null;
+    if (!msg) {
+      // Pesan yang tidak lolos verifikasi: sambungan ini tidak bisa dipercaya lagi.
+      sock.close(4002, 'integrity');
+      return;
+    }
+    if (msg.type === 'welcome') ready = true;
     chain = chain.then(() => onSignal(msg)).catch((err) => console.error(err));
   };
   sock.onclose = (ev) => {
     if (ws !== sock) return;
     ws = null;
+    channel = null;
+    ready = false;
     closePeer();
     if (ev.code === 4001) {
-      showKey('bad_token', { button: 'retry' });
+      if (lastError && !/kode akses|access key/i.test(lastError)) showText(lastError, { button: 'retry' });
+      else showKey('bad_token', { button: 'retry' });
     } else if (ev.code === 4000) {
       showKey('taken', { button: 'takeover' });
+    } else if (ev.code === 4003) {
+      showKey('forbidden', { button: 'retry' });
+    } else if (ev.code === 4004) {
+      showKey('locked', { button: 'retry' });
     } else {
       showKey('dropped', { spinner: true });
       reconnectTimer = setTimeout(connect, 1500);
@@ -327,7 +374,7 @@ function norm(clientX, clientY) {
   ];
 }
 
-const canControl = () => info?.input && ws && ws.readyState === WebSocket.OPEN;
+const canControl = () => info?.input && ready && ws && ws.readyState === WebSocket.OPEN;
 
 /* ---------- Apple Pencil ---------- */
 

@@ -416,6 +416,8 @@ static int cmd_share(int argc, char **argv)
         { "backend", 0, 0, G_OPTION_ARG_STRING, &app.backend, "Tangkap layar: auto | x11 | portal (Wayland)", "B" },
 #endif
         { "no-input", 0, 0, G_OPTION_ARG_NONE, &no_input, "iPad hanya menonton, tanpa kontrol", NULL },
+        { "allow-public", 0, 0, G_OPTION_ARG_NONE, &app.allow_public,
+          "Terima iPad dari alamat publik (bawaan: hanya jaringan lokal dan Tailscale)", NULL },
         { "test-source", 0, 0, G_OPTION_ARG_NONE, &app.test_source, "Pola uji, bukan layar asli", NULL },
         { "web-dir", 0, 0, G_OPTION_ARG_FILENAME, &web_dir, "Folder halaman web iPad", "DIR" },
         { "reset-token", 0, 0, G_OPTION_ARG_NONE, &reset_token, "Buat kode akses baru", NULL },
@@ -646,7 +648,9 @@ static int cmd_share(int argc, char **argv)
     GString *urls = g_string_new(NULL);
     char *first_url = NULL;
     for (guint i = 0; i < addrs->len; i++) {
-        char *url = g_strdup_printf("http://%s:%u/?k=%s", (char *) addrs->pdata[i], app.port, app.token);
+        /* Kode akses ditaruh di fragmen (#k=…): browser tidak pernah mengirim
+         * bagian ini ke server, jadi kodenya tidak lewat jaringan. */
+        char *url = g_strdup_printf("http://%s:%u/#k=%s", (char *) addrs->pdata[i], app.port, app.token);
         if (i)
             g_string_append_c(urls, ' ');
         g_string_append(urls, url);

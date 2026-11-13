@@ -22,11 +22,20 @@ sudo udevadm control --reload-rules || true
 sudo nmcli general reload conf 2>/dev/null || true
 
 if command -v ufw >/dev/null && sudo ufw status | grep -q "Status: active"; then
-    sudo ufw delete allow 8765/tcp || true
-    sudo ufw delete allow 50000:50100/udp || true
-    sudo ufw delete allow 7000,7001,7100/tcp || true
-    sudo ufw delete allow 6000,6001,7011/udp || true
-    sudo ufw delete allow 5353/udp || true
+    # Aturan versi lama (terbuka untuk semua alamat) dan versi baru (hanya
+    # jaringan lokal dan Tailscale) sama-sama dihapus.
+    sudo ufw delete allow 8765/tcp >/dev/null 2>&1 || true
+    sudo ufw delete allow 50000:50100/udp >/dev/null 2>&1 || true
+    sudo ufw delete allow 7000,7001,7100/tcp >/dev/null 2>&1 || true
+    sudo ufw delete allow 6000,6001,7011/udp >/dev/null 2>&1 || true
+    sudo ufw delete allow 5353/udp >/dev/null 2>&1 || true
+    for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fe80::/10 fc00::/7; do
+        sudo ufw delete allow from "$net" to any port 8765 proto tcp >/dev/null 2>&1 || true
+        sudo ufw delete allow from "$net" to any port 50000:50100 proto udp >/dev/null 2>&1 || true
+        sudo ufw delete allow from "$net" to any port 7000,7001,7100 proto tcp >/dev/null 2>&1 || true
+        sudo ufw delete allow from "$net" to any port 6000,6001,7011 proto udp >/dev/null 2>&1 || true
+        sudo ufw delete allow from "$net" to any port 5353 proto udp >/dev/null 2>&1 || true
+    done
 fi
 
 rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/tsunagupad"

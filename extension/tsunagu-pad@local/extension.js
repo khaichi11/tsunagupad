@@ -41,6 +41,7 @@ const QUALITIES = [
 const BOOT_FLAG = '/var/lib/tsunagupad/enabled';
 const SHARE_SERVICE = 'tsunagupad-share.service';
 const CONFIG_PATH = GLib.build_filenamev([GLib.get_user_config_dir(), 'tsunagupad', 'panel.json']);
+const TOKEN_PATH = GLib.build_filenamev([GLib.get_user_config_dir(), 'tsunagupad', 'token']);
 
 function loadConfig() {
     const defaults = {
@@ -528,6 +529,13 @@ class TsunaguPadToggle extends QuickMenuToggle {
         this._copyItem = this._rowItem(copyButton);
         this.menu.addMenuItem(this._copyItem);
 
+        /* Bila QR atau alamatnya sempat terlihat orang lain, kode akses lama
+           dicabut di sini; iPad yang sah cukup memindai QR yang baru. */
+        const resetItem = this.menu.addAction('Buat kode akses baru', () => {
+            this._resetToken().catch(e => this._notify(e.message));
+        });
+        resetItem.add_style_class_name('tsunagupad-link');
+
         /* Hotspot hostapd di AP virtual; Wi-Fi utama tetap tersambung. */
         this._hotspotSeparator = new PopupMenu.PopupSeparatorMenuItem();
         this.menu.addMenuItem(this._hotspotSeparator);
@@ -564,6 +572,21 @@ class TsunaguPadToggle extends QuickMenuToggle {
             this._copyLabel.text = 'Salin alamat';
             return GLib.SOURCE_REMOVE;
         });
+    }
+
+    async _resetToken() {
+        try {
+            Gio.File.new_for_path(TOKEN_PATH).delete(null);
+        } catch (e) {
+            if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND))
+                throw e;
+        }
+        let message = 'Kode akses lama tidak berlaku lagi. Pindai QR yang baru dari iPad.';
+        if (GLib.file_test(BOOT_FLAG, GLib.FileTest.EXISTS))
+            message += ' Jalankan make login-setup lagi agar layar login juga memakai kode baru.';
+        if (this._daemonKind === 'share')
+            await this._restart();
+        this._notify(message);
     }
 
     _outputName(o) {
@@ -739,6 +762,7 @@ class TsunaguPadToggle extends QuickMenuToggle {
                 () => this._onExit(daemon));
             this._daemon = daemon;
             this._daemonKind = kind;
+            this._lastClient = null;
             this._startedAt = GLib.get_monotonic_time();
             this._status = kind === 'share' ? 'Menyiapkan…' : 'Menunggu iPad…';
             this._urls = [];
@@ -826,12 +850,21 @@ class TsunaguPadToggle extends QuickMenuToggle {
                 this._status = 'Menunggu iPad…';
                 break;
             case 'client':
-                if (ev.state === 'connected')
+                if (ev.state === 'connected') {
                     this._status = 'Terhubung ke iPad';
-                else if (ev.state === 'disconnected')
+                    /* Setiap perangkat baru yang memegang kendali diberitahukan,
+                       supaya sambungan yang tidak dikenal langsung terlihat. */
+                    if (ev.addr && ev.addr !== this._lastClient) {
+                        this._lastClient = ev.addr;
+                        this._notify(`iPad tersambung dari ${ev.addr} dan bisa mengendalikan layar ini.`);
+                    }
+                } else if (ev.state === 'disconnected') {
                     this._status = 'Menunggu iPad…';
-                else if (ev.state === 'rejected')
+                } else if (ev.state === 'rejected') {
                     this._status = 'Kode akses ditolak';
+                } else if (ev.state === 'locked') {
+                    this._notify(`Terlalu banyak kode akses salah dari ${ev.addr}; alamat itu diblokir sebentar.`);
+                }
                 break;
             case 'portal':
                 this._status = ev.state === 'waiting' ? 'Menunggu izin GNOME…' : 'Menyiapkan…';
