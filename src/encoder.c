@@ -19,6 +19,57 @@ typedef struct {
  * cudaconvertscale butuh NVRTC dari CUDA Toolkit yang umumnya tidak terpasang.
  * Encoder Intel "intel-lp" (VDEnc) didahulukan dari vaapi lama karena bitrate-nya
  * bisa diubah saat berjalan, sehingga bitrate adaptif tetap bekerja. */
+#ifdef G_OS_WIN32
+/* Windows: frame datang dari DXGI Desktop Duplication sebagai tekstur D3D11.
+ * Konversi ke NV12 dan penyekalaan dikerjakan d3d11convert di GPU, lalu
+ * encoder perangkat keras membaca teksturnya langsung. d3d11upload di depan
+ * hanya meneruskan tekstur yang sudah ada di GPU; ia baru bekerja saat uji
+ * coba encoder (videotestsrc) atau mode pola uji yang berasal dari memori biasa.
+ *
+ * Bila monitor tersambung ke GPU lain (laptop Optimus: layar di Intel, encoder
+ * di NVIDIA), GStreamer menyalin frame antar-GPU sendiri. Urutannya sama
+ * seperti di Linux: NVIDIA, Intel, lalu AMD, Media Foundation (encoder bawaan
+ * Windows dari vendor mana pun), dan x264 sebagai cadangan. */
+#define D3D11_NV12 "d3d11upload ! d3d11convert ! " \
+                   "video/x-raw(memory:D3D11Memory),format=NV12,width=%d,height=%d ! "
+static const Encoder encoders[] = {
+    { "nvidia",
+      D3D11_NV12
+      "nvd3d11h264enc name=enc preset=p1 tune=ultra-low-latency rc-mode=cbr "
+      "bitrate=%d gop-size=%d vbv-buffer-size=%d bframes=0 zerolatency=true",
+      TRUE },
+    { "intel",
+      D3D11_NV12
+      "qsvh264enc name=enc rate-control=cbr bitrate=%d gop-size=%d b-frames=0 ref-frames=1 "
+      "target-usage=7 low-latency=true",
+      TRUE },
+    { "amd",
+      D3D11_NV12
+      "amfh264enc name=enc usage=ultra-low-latency rate-control=cbr preset=speed "
+      "bitrate=%d gop-size=%d b-frames=0",
+      TRUE },
+    /* Media Foundation menyusun ulang encodernya setiap kali bitrate diubah,
+     * jadi bitrate-nya dibiarkan tetap pada batas preset. */
+    { "mf",
+      D3D11_NV12
+      "mfh264enc name=enc rc-mode=cbr bitrate=%d gop-size=%d bframes=0 low-latency=true "
+      "quality-vs-speed=0",
+      FALSE },
+    { "cpu",
+      D3D11_NV12
+      "d3d11download ! video/x-raw,format=NV12 ! "
+      "x264enc name=enc tune=zerolatency speed-preset=ultrafast bitrate=%d key-int-max=%d bframes=0 "
+      "vbv-buf-capacity=350 threads=4 sliced-threads=true",
+      TRUE },
+    /* Cadangan terakhir tanpa Direct3D sama sekali (mis. mesin virtual tanpa
+     * GPU): penangkap layar menyalin frame ke memori biasa sendiri. */
+    { "cpu-sw",
+      "videoconvertscale n-threads=4 ! video/x-raw,format=I420,width=%d,height=%d ! "
+      "x264enc name=enc tune=zerolatency speed-preset=ultrafast bitrate=%d key-int-max=%d bframes=0 "
+      "vbv-buf-capacity=350 threads=4 sliced-threads=true",
+      TRUE },
+};
+#else
 static const Encoder encoders[] = {
     { "nvidia",
       "videoconvertscale n-threads=4 ! video/x-raw,format=NV12,width=%d,height=%d ! "
@@ -56,6 +107,7 @@ static const Encoder encoders[] = {
       "vbv-buf-capacity=350 threads=4 sliced-threads=true",
       TRUE },
 };
+#endif
 
 static const Encoder *find(const char *name)
 {

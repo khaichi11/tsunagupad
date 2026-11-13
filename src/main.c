@@ -1,20 +1,22 @@
-/* Tsunagu-Pad, satukan layar Ubuntu dan iPad.
+/* Tsunagu-Pad, satukan layar komputer (Ubuntu atau Windows) dan iPad.
  *
- *   tsunagupad share    Layar Ubuntu -> iPad (Safari, WebRTC) + kontrol sentuh/Pencil
- *   tsunagupad receive  Layar iPad -> Ubuntu (AirPlay, lewat UxPlay)
+ *   tsunagupad share    Layar komputer -> iPad (Safari, WebRTC) + kontrol sentuh/Pencil
+ *   tsunagupad receive  Layar iPad -> komputer (AirPlay, lewat UxPlay)
  *   tsunagupad probe    Cek encoder video yang tersedia
  *
  * SPDX-License-Identifier: MIT
  */
-#include <arpa/inet.h>
 #include <errno.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifndef _WIN32
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <signal.h>
 #include <fcntl.h>
 #include <sys/prctl.h>
 #include <sys/random.h>
@@ -23,8 +25,12 @@
 
 #include <X11/Xlib.h>
 #include <glib-unix.h>
+#endif
 
 #include "tsunagupad.h"
+#ifdef _WIN32
+#include "win/win.h"
+#endif
 
 static const struct {
     const char *name;
@@ -80,8 +86,13 @@ static char *load_token(gboolean reset)
 
     static const char abc[] = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     guint8 raw[12];
+#ifdef G_OS_WIN32
+    if (!win_random(raw, sizeof raw))
+        g_error("Bilangan acak dari Windows gagal dibuat");
+#else
     if (getrandom(raw, sizeof raw, 0) != sizeof raw)
         g_error("getrandom gagal: %s", g_strerror(errno));
+#endif
     token = g_malloc(sizeof raw + 1);
     for (guint i = 0; i < sizeof raw; i++)
         token[i] = abc[raw[i] % (sizeof abc - 1)];
@@ -94,6 +105,8 @@ out:
     g_free(path);
     return token;
 }
+
+#ifndef G_OS_WIN32
 
 /* ---------- alamat untuk iPad ---------- */
 
@@ -284,14 +297,32 @@ static void stop_stale(ProcessMatch match, gpointer data)
     g_array_free(pids, TRUE);
 }
 
+#else /* G_OS_WIN32 */
+
+/* Windows: alamat dan folder web dicari lewat API Windows (src/win/sys.c). */
+static GPtrArray *local_addresses(void)
+{
+    return win_local_addresses();
+}
+
+static char *find_web_dir(const char *given)
+{
+    return win_find_web_dir(given);
+}
+
+#endif /* G_OS_WIN32 */
+
 /* ---------- perintah ---------- */
 
+#ifndef G_OS_WIN32
 static gboolean on_quit_signal(gpointer loop)
 {
     g_main_loop_quit(loop);
     return G_SOURCE_CONTINUE;
 }
+#endif
 
+#ifndef G_OS_WIN32
 /* Area tangkap dihitung sekali saat mulai. Kalau ukuran layar X berubah,
  * misalnya monitor baru dicolok setelah sesi berjalan, area lama membuat iPad
  * hanya menampilkan pojok layar. Proses keluar dengan kode gagal supaya
@@ -320,6 +351,8 @@ static gboolean screen_watch_tick(gpointer data)
     return G_SOURCE_CONTINUE;
 }
 
+#endif
+
 static int fail(const char *message)
 {
     tsunagu_event("error", "message", message, NULL);
@@ -327,6 +360,7 @@ static int fail(const char *message)
     return 1;
 }
 
+#ifndef G_OS_WIN32
 /* Utamakan UxPlay yang dipasang pengguna sendiri. Ini memungkinkan perbaikan
  * upstream dipakai tanpa menimpa paket Ubuntu di /usr/bin. */
 static char *find_uxplay(void)
@@ -338,11 +372,18 @@ static char *find_uxplay(void)
     return g_find_program_in_path("uxplay");
 }
 
+#endif
+
 static int cmd_share(int argc, char **argv)
 {
     App app = { 0 };
     int port = 8765;
+#ifdef G_OS_WIN32
+    gboolean screen_changed = FALSE;
+    char *monitor = NULL;
+#else
     static ScreenWatch screen_watch;
+#endif
     char *region = NULL, *second = NULL, *cursor = NULL, *web_dir = NULL, *scale = NULL;
     gboolean no_input = FALSE, reset_token = FALSE;
     app.quality = "lancar";
@@ -355,11 +396,25 @@ static int cmd_share(int argc, char **argv)
         { "region", 'r', 0, G_OPTION_ARG_STRING, &region, "Area layar yang dibagikan", "X,Y,W,H" },
         { "cursor", 0, 0, G_OPTION_ARG_STRING, &cursor, "Kursor layar kedua: sistem (bawaan) | lokal", "MODE" },
         { "scale", 0, 0, G_OPTION_ARG_STRING, &scale, "Skala layar kedua: 1 (bawaan), 1.25, 1.5, 2, atau ikut", "S" },
+#ifdef G_OS_WIN32
+        { "second", 0, 0, G_OPTION_ARG_STRING, &second, "iPad jadi layar kedua, mis. 1280x800", "WxH" },
+        { "monitor", 'm', 0, G_OPTION_ARG_STRING, &monitor,
+          "Monitor yang dibagikan: primary (bawaan), nomor urut, atau nama seperti \\\\.\\DISPLAY2", "MON" },
+#else
         { "second", 0, 0, G_OPTION_ARG_STRING, &second, "iPad jadi layar kedua, mis. 1280x800 (Wayland)", "WxH" },
+#endif
         { "quality", 'q', 0, G_OPTION_ARG_STRING, &app.quality, "hemat | lancar | seimbang | tajam | monitor", "Q" },
+#ifdef G_OS_WIN32
+        { "encoder", 'e', 0, G_OPTION_ARG_STRING, &app.encoder, "auto | nvidia | intel | amd | mf | cpu | cpu-sw", "ENC" },
+#else
         { "encoder", 'e', 0, G_OPTION_ARG_STRING, &app.encoder, "auto | nvidia | intel-lp | intel | tegra | vic-x264 | cpu", "ENC" },
+#endif
         { "pen", 0, 0, G_OPTION_ARG_STRING, &app.pen_mode, "Apple Pencil: auto | tablet | mouse", "MODE" },
+#ifdef G_OS_WIN32
+        { "backend", 0, 0, G_OPTION_ARG_STRING, &app.backend, "Tangkap layar: auto | dxgi", "B" },
+#else
         { "backend", 0, 0, G_OPTION_ARG_STRING, &app.backend, "Tangkap layar: auto | x11 | portal (Wayland)", "B" },
+#endif
         { "no-input", 0, 0, G_OPTION_ARG_NONE, &no_input, "iPad hanya menonton, tanpa kontrol", NULL },
         { "test-source", 0, 0, G_OPTION_ARG_NONE, &app.test_source, "Pola uji, bukan layar asli", NULL },
         { "web-dir", 0, 0, G_OPTION_ARG_FILENAME, &web_dir, "Folder halaman web iPad", "DIR" },
@@ -368,7 +423,7 @@ static int cmd_share(int argc, char **argv)
           "Tanya lagi layar mana yang dibagikan (Wayland)", NULL },
         { NULL },
     };
-    GOptionContext *ctx = g_option_context_new("- bagikan layar Ubuntu ke iPad");
+    GOptionContext *ctx = g_option_context_new("- bagikan layar komputer ke iPad");
     g_option_context_add_main_entries(ctx, entries, NULL);
     GError *err = NULL;
     if (!g_option_context_parse(ctx, &argc, &argv, &err))
@@ -386,6 +441,95 @@ static int cmd_share(int argc, char **argv)
     if (preset < 0)
         return fail("Kualitas tidak dikenal (pilih hemat, lancar, seimbang, tajam, atau monitor)");
 
+#ifdef G_OS_WIN32
+    if (!g_str_equal(app.backend, "auto") && !g_str_equal(app.backend, "dxgi"))
+        return fail("Backend tidak dikenal (di Windows pilih auto atau dxgi)");
+
+    /* Proses lama yang masih memegang port dihentikan dulu, lalu encoder dicek
+     * sebelum monitor virtual dipasang, supaya tata letak layar tidak berubah
+     * percuma bila ternyata tidak ada encoder yang jalan. */
+    win_stop_stale_share(app.port);
+    app.enc_name = encoder_pick(app.encoder);
+    if (!app.enc_name)
+        return fail("Tidak ada encoder H.264 yang jalan. Pasang ulang Tsunagu-Pad untuk memulihkan plugin GStreamer.");
+    if (!app.test_source) {
+        GstElementFactory *dxgi = gst_element_factory_find("d3d11screencapturesrc");
+        if (!dxgi)
+            return fail("Plugin GStreamer untuk menangkap layar (d3d11screencapturesrc) tidak ditemukan. Pasang ulang Tsunagu-Pad.");
+        gst_object_unref(dxgi);
+    }
+
+    if (second) {
+        int vw = 0, vh = 0;
+        if (sscanf(second, "%dx%d", &vw, &vh) != 2 || vw < 320 || vh < 240)
+            return fail("Format --second harus LEBARxTINGGI, mis. 1280x800");
+        /* Skala menentukan luas ruang kerja di iPad, sama seperti di Ubuntu:
+         * 1 berarti ukuran yang diminta itu juga ukuran desktopnya, "ikut"
+         * menyamakan dengan monitor utama. */
+        double vscale = 1.0;
+        if (scale && g_str_equal(scale, "ikut"))
+            vscale = 0;
+        else if (scale) {
+            char *endp = NULL;
+            vscale = g_ascii_strtod(scale, &endp);
+            if (endp == scale || vscale < 0.5 || vscale > 4)
+                return fail("Nilai --scale harus antara 0.5 dan 4, atau kata ikut");
+        }
+        GError *verr = NULL;
+        app.vdisp = vdisp_open(vw & ~1, vh & ~1, vscale, &verr);
+        if (!app.vdisp)
+            return fail(verr ? verr->message : "Monitor virtual gagal dibuat");
+        WinMonitor vm;
+        if (!win_monitor_by_device(vdisp_device(app.vdisp), &vm)) {
+            vdisp_close(app.vdisp);
+            return fail("Monitor virtual tidak muncul di Windows");
+        }
+        app.monitor = g_strdup(vm.device);
+        app.rx = vm.x;
+        app.ry = vm.y;
+        app.rw = vm.width;
+        app.rh = vm.height;
+        /* Kursor asli dari Windows ikut digambar ke video; "lokal" mematikannya. */
+        app.hide_cursor = g_strcmp0(cursor, "lokal") == 0;
+        tsunagu_event("second", "state", "placed", "monitor", vm.device, NULL);
+    } else if (app.test_source) {
+        app.rw = 1920;
+        app.rh = 1080;
+    } else {
+        WinMonitor mon;
+        int qx = 0, qy = 0, qw = 0, qh = 0;
+        if (region) {
+            if (sscanf(region, "%d,%d,%d,%d", &qx, &qy, &qw, &qh) != 4 || qw < 16 || qh < 16)
+                return fail("Format --region harus X,Y,LEBAR,TINGGI");
+            /* Area dipotong dari monitor yang memuat sudut kiri atasnya. */
+            char *spec = g_strdup_printf("@%d,%d", qx, qy);
+            gboolean found = win_monitor_find(spec, &mon);
+            g_free(spec);
+            if (!found)
+                return fail("Tidak ada monitor di titik --region itu");
+        } else if (!win_monitor_find(monitor, &mon)) {
+            return fail(monitor ? "Monitor yang diminta tidak ditemukan. Lihat daftarnya dengan: tsunagupad monitors"
+                                : "Tidak ada monitor aktif untuk dibagikan");
+        }
+        app.monitor = g_strdup(mon.device);
+        if (region) {
+            int x0 = CLAMP(qx, mon.x, mon.x + mon.width - 16);
+            int y0 = CLAMP(qy, mon.y, mon.y + mon.height - 16);
+            app.rw = MIN(qw, mon.x + mon.width - x0);
+            app.rh = MIN(qh, mon.y + mon.height - y0);
+            app.rx = x0;
+            app.ry = y0;
+            app.crop = TRUE;
+            app.crop_x = x0 - mon.x;
+            app.crop_y = y0 - mon.y;
+        } else {
+            app.rx = mon.x;
+            app.ry = mon.y;
+            app.rw = mon.width;
+            app.rh = mon.height;
+        }
+    }
+#else
     if (!g_str_equal(app.backend, "auto") && !g_str_equal(app.backend, "x11") && !g_str_equal(app.backend, "portal"))
         return fail("Backend tidak dikenal (pilih auto, x11, atau portal)");
     gboolean use_portal = g_str_equal(app.backend, "portal") ||
@@ -471,6 +615,7 @@ static int cmd_share(int argc, char **argv)
         screen_watch.height = app.rh;
         XSelectInput(dpy, screen_watch.root, StructureNotifyMask);
     }
+#endif /* G_OS_WIN32 */
 
     app.fps = presets[preset].fps;
     app.kbps = presets[preset].kbps;
@@ -516,6 +661,22 @@ static int cmd_share(int argc, char **argv)
                "fps", fps, "quality", app.quality, NULL);
     g_printerr("Tsunagu-Pad siap. Buka di Safari iPad: %s\n", first_url);
 
+#ifdef G_OS_WIN32
+    win_quit_watch(app.loop);
+    /* Monitor yang dibagikan bisa dicabut atau diubah resolusinya. Area lama
+     * membuat iPad hanya menampilkan sebagian layar, jadi proses keluar dengan
+     * kode 3 dan panel menyalakannya lagi dengan ukuran yang benar. Layar kedua
+     * tidak diawasi: tata letaknya justru diubah oleh program ini sendiri. */
+    if (app.monitor && !app.vdisp)
+        win_screen_watch(&app, app.loop, &screen_changed);
+    g_main_loop_run(app.loop);
+
+    server_stop(&app);
+    share_stop(&app);
+    input_free(app.input);
+    vdisp_close(app.vdisp);
+    g_free(app.monitor);
+#else
     g_unix_signal_add(SIGINT, on_quit_signal, app.loop);
     g_unix_signal_add(SIGTERM, on_quit_signal, app.loop);
     if (screen_watch.dpy) {
@@ -531,6 +692,7 @@ static int cmd_share(int argc, char **argv)
     input_free(app.input);
     virtmon_close(app.virtmon);
     portal_free(app.portal);
+#endif
     g_main_loop_unref(app.loop);
     g_ptr_array_unref(addrs);
     g_string_free(urls, TRUE);
@@ -540,18 +702,26 @@ static int cmd_share(int argc, char **argv)
     g_free(fps);
     g_free(app.token);
     g_free(app.web_dir);
+#ifdef G_OS_WIN32
+    if (screen_changed) {
+#else
     if (screen_watch.changed) {
+#endif
         g_printerr("tsunagupad: ukuran layar berubah, perlu dinyalakan ulang\n");
         return 3;
     }
     return 0;
 }
 
-/* iPad -> Ubuntu: jalankan UxPlay (penerima AirPlay open source, GPL) dengan
+/* iPad -> komputer: jalankan UxPlay (penerima AirPlay open source, GPL) dengan
  * pengaturan latensi rendah. Port tetap (-p) supaya mudah dibuka di firewall. */
 static int cmd_receive(int argc, char **argv)
 {
+#ifdef G_OS_WIN32
+    char *name = "Tsunagu-Pad Windows";
+#else
     char *name = "Tsunagu-Pad Ubuntu";
+#endif
     int fps = 60;
     gboolean fullscreen = FALSE, pin = FALSE, no_audio = FALSE;
 
@@ -570,6 +740,11 @@ static int cmd_receive(int argc, char **argv)
         return fail(err->message);
     g_option_context_free(ctx);
 
+#ifdef G_OS_WIN32
+    /* Windows tidak punya execv yang menggantikan proses; UxPlay dijalankan
+     * sebagai anak proses dan ikut berhenti bersama proses ini. */
+    return win_cmd_receive(name, fps, fullscreen, pin, no_audio);
+#else
     char *uxplay = find_uxplay();
     if (!uxplay)
         return fail("UxPlay belum terpasang. Jalankan ./install.sh (atau: sudo apt install uxplay)");
@@ -618,14 +793,25 @@ static int cmd_receive(int argc, char **argv)
     tsunagu_event("receiver", "state", "starting", "name", name, NULL);
     execv(args->pdata[0], (char **) args->pdata);
     return fail(g_strerror(errno));
+#endif
 }
 
 /* Cepat dan tanpa uji encoder: dipanggil panel setiap kali dimuat. */
 static int cmd_capabilities(void)
 {
     char *model = caps_model();
+#ifdef G_OS_WIN32
+    /* Di Windows ada dua kemampuan tambahan yang dipakai panel: layar kedua
+     * (driver layar virtual terpasang) dan layanan untuk layar login. */
+    tsunagu_event("capabilities", "model", model, "jetson", caps_is_jetson() ? "yes" : "no",
+                  "hotspot", caps_hotspot(), "pencil", caps_has_uinput() ? "tablet" : "mouse",
+                  "second", vdisp_available() ? "yes" : "no",
+                  "service", win_service_installed() ? "yes" : "no",
+                  "os", "windows", NULL);
+#else
     tsunagu_event("capabilities", "model", model, "jetson", caps_is_jetson() ? "yes" : "no",
                   "hotspot", caps_hotspot(), "pencil", caps_has_uinput() ? "tablet" : "mouse", NULL);
+#endif
     g_free(model);
     return 0;
 }
@@ -634,12 +820,21 @@ static int cmd_probe(void)
 {
     gst_init(NULL, NULL);
     const char *enc = encoder_pick("auto");
+#ifdef G_OS_WIN32
+    char *uxplay = win_find_uxplay();
+    GstElementFactory *cap = gst_element_factory_find("d3d11screencapturesrc");
+    tsunagu_event("probe", "encoder", enc ? enc : "", "uxplay", uxplay ? "yes" : "no",
+                  "capture", cap ? "yes" : "no", NULL);
+    if (cap)
+        gst_object_unref(cap);
+#else
     char *uxplay = find_uxplay();
     GstElementFactory *pw = gst_element_factory_find("pipewiresrc");
     tsunagu_event("probe", "encoder", enc ? enc : "", "uxplay", uxplay ? "yes" : "no",
                   "pipewire", pw ? "yes" : "no", NULL);
     if (pw)
         gst_object_unref(pw);
+#endif
     g_free(uxplay);
     return enc ? 0 : 1;
 }
@@ -656,6 +851,8 @@ static int cmd_qr(int argc, char **argv)
     g_free(rows);
     return 0;
 }
+
+#ifndef G_OS_WIN32
 
 /* ---------- kendali dari jarak jauh (SSH) ---------- */
 
@@ -881,8 +1078,25 @@ static int cmd_hotspot(const char *what)
     return ok ? 0 : 1;
 }
 
+#endif /* !G_OS_WIN32 */
+
 static void usage(void)
 {
+#ifdef G_OS_WIN32
+    g_print("Tsunagu-Pad %s, satukan layar Windows dan iPad\n\n"
+            "Pemakaian:\n"
+            "  tsunagupad share   [--monitor M] [--second WxH] [--quality Q] [--encoder E] ...\n"
+            "  tsunagupad receive [--name NAMA] [--fullscreen] ...\n"
+            "  tsunagupad on | off | status\n"
+            "  tsunagupad hotspot on|off|status|config NAMA\n"
+            "  tsunagupad monitors\n"
+            "  tsunagupad second-off\n"
+            "  tsunagupad service install|uninstall|enable|disable|status|start|stop\n"
+            "  tsunagupad probe\n"
+            "  tsunagupad capabilities\n"
+            "  tsunagupad qr TEKS\n\n"
+            "Tambahkan --help setelah perintah untuk semua opsi.\n", TSUNAGUPAD_VERSION);
+#else
     g_print("Tsunagu-Pad %s, satukan layar Ubuntu dan iPad\n\n"
             "Pemakaian:\n"
             "  tsunagupad share   [--region X,Y,W,H] [--quality Q] [--encoder E] ...\n"
@@ -893,15 +1107,22 @@ static void usage(void)
             "  tsunagupad capabilities\n"
             "  tsunagupad qr TEKS\n\n"
             "Tambahkan --help setelah perintah untuk semua opsi.\n", TSUNAGUPAD_VERSION);
+#endif
 }
 
 int main(int argc, char **argv)
 {
+#ifdef G_OS_WIN32
+    /* Argumen dibaca ulang sebagai UTF-8 (nama monitor, nama Wi-Fi), lalu
+     * DPI, konsol, dan lokasi plugin GStreamer disiapkan. */
+    argv = win_init_process(&argc, argv);
+#else
     /* Ikut berhenti bila GNOME Shell (induk proses) keluar. Tidak berlaku untuk
      * sesi yang dilepas lewat "tsunagupad on": induknya memang langsung selesai
      * setelah mencetak alamat, dan tanpa pengecualian ini daemonnya ikut mati. */
     if (!g_getenv("TSUNAGUPAD_DETACHED"))
         prctl(PR_SET_PDEATHSIG, SIGTERM);
+#endif
 
     if (argc < 2) {
         usage();
@@ -912,6 +1133,24 @@ int main(int argc, char **argv)
         return cmd_share(argc - 1, argv + 1);
     if (g_str_equal(cmd, "receive"))
         return cmd_receive(argc - 1, argv + 1);
+#ifdef G_OS_WIN32
+    if (g_str_equal(cmd, "on"))
+        return win_cmd_on(argc - 1, argv + 1);
+    if (g_str_equal(cmd, "off"))
+        return win_cmd_off();
+    if (g_str_equal(cmd, "status"))
+        return win_cmd_status();
+    if (g_str_equal(cmd, "hotspot"))
+        return win_cmd_hotspot(argc - 1, argv + 1);
+    if (g_str_equal(cmd, "monitors"))
+        return win_cmd_monitors();
+    if (g_str_equal(cmd, "second-off"))
+        return win_cmd_second_off();
+    if (g_str_equal(cmd, "service"))
+        return win_cmd_service(argc - 1, argv + 1);
+    if (g_str_equal(cmd, "setup"))
+        return win_cmd_setup(argc - 1, argv + 1);
+#else
     if (g_str_equal(cmd, "on"))
         return cmd_on(argc - 1, argv + 1);
     if (g_str_equal(cmd, "off"))
@@ -920,6 +1159,7 @@ int main(int argc, char **argv)
         return cmd_status();
     if (g_str_equal(cmd, "hotspot"))
         return cmd_hotspot(argc > 2 ? argv[2] : "");
+#endif
     if (g_str_equal(cmd, "probe"))
         return cmd_probe();
     if (g_str_equal(cmd, "capabilities"))

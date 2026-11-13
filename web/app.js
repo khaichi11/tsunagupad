@@ -1,6 +1,7 @@
 /* Tsunagu-Pad, halaman untuk Safari di iPad.
- * Menampilkan layar Ubuntu lewat WebRTC dan mengirim sentuhan, Apple Pencil,
- * mouse/trackpad, dan keyboard kembali ke Ubuntu. Tanpa library, tanpa build step.
+ * Menampilkan layar komputer (Ubuntu atau Windows) lewat WebRTC dan mengirim
+ * sentuhan, Apple Pencil, mouse/trackpad, dan keyboard kembali ke komputer itu.
+ * Tanpa library, tanpa build step.
  * SPDX-License-Identifier: MIT
  */
 'use strict';
@@ -27,7 +28,7 @@ if (query.get('k')) store.set('tsunagupad.token', token);
 const STRINGS = {
   en: {
     menu: 'Open the Tsunagu-Pad menu',
-    typing: 'Type into Ubuntu',
+    typing: 'Type into {host}',
     keyboard: 'Keyboard',
     fullscreen: 'Full screen',
     info: 'Info',
@@ -38,21 +39,21 @@ const STRINGS = {
     touch_scroll: 'Touch: Scroll',
     touch_off: 'Touch: Off',
     hint: 'Tip: use Share, then Add to Home Screen, so Tsunagu-Pad opens full screen like an app.',
-    no_token: 'No access key yet. Scan the QR code from the Tsunagu-Pad panel on Ubuntu.',
-    connecting: 'Connecting to Ubuntu...',
+    no_token: 'No access key yet. Scan the QR code from the Tsunagu-Pad panel on {host}.',
+    connecting: 'Connecting to {host}...',
     bad_token: 'Wrong access key. Scan the QR code from the Tsunagu-Pad panel again.',
     taken: 'The screen is in use by another device.',
-    dropped: 'Disconnected from Ubuntu. Reconnecting...',
+    dropped: 'Disconnected from {host}. Reconnecting...',
     preparing: 'Preparing the video...',
-    ice_failed: 'The video could not connect. Make sure the iPad is on the same network as Ubuntu and that the firewall is open (install.sh).',
-    tap_to_play: 'Tap to show the Ubuntu screen.',
+    ice_failed: 'The video could not connect. Make sure the iPad is on the same network as {host} and that the firewall is open {fw}.',
+    tap_to_play: 'Tap to show the {host} screen.',
     retry: 'Try again',
     takeover: 'Take over',
     play: 'Start',
   },
   id: {
     menu: 'Buka menu Tsunagu-Pad',
-    typing: 'Ketik ke Ubuntu',
+    typing: 'Ketik ke {host}',
     keyboard: 'Keyboard',
     fullscreen: 'Layar penuh',
     info: 'Info',
@@ -63,14 +64,14 @@ const STRINGS = {
     touch_scroll: 'Sentuh: Gulir',
     touch_off: 'Sentuh: Mati',
     hint: 'Tips: ketuk Bagikan, lalu Tambahkan ke Layar Utama, supaya Tsunagu-Pad terbuka layar penuh seperti aplikasi.',
-    no_token: 'Kode akses belum ada. Pindai QR dari panel Tsunagu-Pad di Ubuntu.',
-    connecting: 'Menyambung ke Ubuntu...',
+    no_token: 'Kode akses belum ada. Pindai QR dari panel Tsunagu-Pad di {host}.',
+    connecting: 'Menyambung ke {host}...',
     bad_token: 'Kode akses salah. Pindai ulang QR dari panel Tsunagu-Pad.',
     taken: 'Layar sedang dipakai perangkat lain.',
-    dropped: 'Terputus dari Ubuntu. Menyambung ulang...',
+    dropped: 'Terputus dari {host}. Menyambung ulang...',
     preparing: 'Menyiapkan video...',
-    ice_failed: 'Video tidak tersambung. Pastikan iPad satu jaringan dengan Ubuntu dan firewall sudah dibuka (install.sh).',
-    tap_to_play: 'Ketuk untuk menampilkan layar Ubuntu.',
+    ice_failed: 'Video tidak tersambung. Pastikan iPad satu jaringan dengan {host} dan firewall sudah dibuka {fw}.',
+    tap_to_play: 'Ketuk untuk menampilkan layar {host}.',
     retry: 'Coba lagi',
     takeover: 'Ambil alih',
     play: 'Mulai',
@@ -83,7 +84,19 @@ if (!LANGS.includes(lang)) {
   lang = (navigator.language || '').toLowerCase().startsWith('id') ? 'id' : 'en';
 }
 
-const t = (key) => STRINGS[lang][key] ?? STRINGS.en[key] ?? key;
+/* Server menuliskan nama sistemnya di <html data-host>, jadi halaman yang sama
+   menyebut Ubuntu atau Windows sesuai komputer yang dibagikan. */
+const HOST = document.documentElement.dataset.host || 'Ubuntu';
+const FIREWALL_HINT = HOST === 'Windows'
+  ? '(Windows Firewall: install Tsunagu-Pad again or allow tsunagupad.exe)'
+  : '(install.sh)';
+const FIREWALL_HINT_ID = HOST === 'Windows'
+  ? '(Windows Firewall: pasang ulang Tsunagu-Pad atau izinkan tsunagupad.exe)'
+  : '(install.sh)';
+
+const t = (key) => (STRINGS[lang][key] ?? STRINGS.en[key] ?? key)
+  .replaceAll('{host}', HOST)
+  .replaceAll('{fw}', lang === 'id' ? FIREWALL_HINT_ID : FIREWALL_HINT);
 
 function applyLanguage() {
   document.documentElement.lang = lang;

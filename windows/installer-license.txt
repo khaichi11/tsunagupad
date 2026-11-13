@@ -1,0 +1,49 @@
+Tsunagu-Pad
+Copyright (c) 2026 Tsunagu-Pad contributors
+Dirilis dengan Lisensi MIT / Released under the MIT License (lihat di bawah / see below).
+
+PERNYATAAN / DISCLAIMER
+
+Ini proyek hobi eksperimental, gratis, dan tanpa jaminan apa pun. Pemasang ini
+mengubah pengaturan sistem: membuka Windows Firewall untuk tsunagupad.exe dan
+uxplay.exe (hanya dari subnet lokal dan Tailscale), dan bila dipilih memasang
+driver layar virtual, sebuah layanan Windows, serta menambahkan folder program
+ke PATH. Siapa pun yang memegang kode akses (QR) dapat melihat dan
+mengendalikan layar komputer ini, jadi jangan bagikan kode itu. Gunakan di
+jaringan milik Anda sendiri dengan kata sandi Wi-Fi yang kuat.
+
+This is an experimental hobby project provided free of charge and without any
+warranty. The installer changes system settings: it opens Windows Firewall for
+tsunagupad.exe and uxplay.exe (local subnet and Tailscale only), and, when
+selected, installs a virtual display driver, a Windows service, and adds the
+program folder to PATH. Anyone holding the access key (QR code) can see and
+control this computer's screen, so do not share it.
+
+KOMPONEN PIHAK KETIGA / THIRD PARTY COMPONENTS
+
+Pemasang ini membawa komponen pihak ketiga dengan lisensinya masing-masing:
+GStreamer dan pustaka pendukungnya (LGPL), x264 (GPL-2.0-or-later), FFmpeg
+(LGPL), UxPlay (GPL-3.0-or-later), dan Virtual Display Driver (MIT). Teks
+lisensinya dan alamat kode sumbernya ada di folder "licenses" di dalam folder
+pemasangan. Apple, iPad, Apple Pencil, dan AirPlay adalah merek dagang Apple
+Inc.; Tsunagu-Pad tidak berafiliasi dengan Apple.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

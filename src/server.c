@@ -2,8 +2,13 @@
  * (signaling WebRTC + event sentuh/Pencil/keyboard).
  * SPDX-License-Identifier: MIT
  */
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#endif
 #include <string.h>
 
 #include "tsunagupad.h"
@@ -68,6 +73,18 @@ static void http_handler(SoupServer *server, SoupServerMessage *msg, const char 
         soup_server_message_set_status(msg, SOUP_STATUS_NOT_FOUND, NULL);
         return;
     }
+
+#ifdef G_OS_WIN32
+    /* Halaman yang sama dipakai untuk Ubuntu dan Windows; nama sistemnya
+     * diganti di sini supaya tulisan di iPad menyebut komputer yang benar. */
+    if (g_str_equal(path, "/index.html") || g_str_equal(path, "/manifest.webmanifest")) {
+        char **parts = g_strsplit(data, "Ubuntu", -1);
+        g_free(data);
+        data = g_strjoinv("Windows", parts);
+        len = strlen(data);
+        g_strfreev(parts);
+    }
+#endif
 
     SoupMessageHeaders *h = soup_server_message_get_response_headers(msg);
     soup_message_headers_replace(h, "Cache-Control", "no-cache");
@@ -188,7 +205,11 @@ static void handle_hello(Client *c, JsonObject *o)
     json_builder_set_member_name(b, "input");
     json_builder_add_boolean_value(b, app->input != NULL);
     json_builder_set_member_name(b, "second");
+#ifdef G_OS_WIN32
+    json_builder_add_boolean_value(b, app->vdisp != NULL);
+#else
     json_builder_add_boolean_value(b, app->virtmon != NULL);
+#endif
     json_builder_set_member_name(b, "version");
     json_builder_add_string_value(b, TSUNAGUPAD_VERSION);
     json_builder_end_object(b);

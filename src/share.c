@@ -5,6 +5,9 @@
 
 #include "tsunagupad.h"
 #include "webrtc-lite.h"
+#ifdef G_OS_WIN32
+#include "win/win.h"
+#endif
 
 /* Port UDP media; install.sh membuka rentang yang sama di firewall. */
 #define RTP_PORT_MIN 50000
@@ -358,6 +361,48 @@ static void on_ice_state(GObject *webrtc, GParamSpec *pspec, gpointer data)
     post(data, "ice-state", NULL, state);
 }
 
+#ifdef G_OS_WIN32
+/* Paling banyak tiga kali dalam setengah menit; lebih dari itu berarti
+ * kesalahannya menetap dan iPad diberi tahu. */
+static gint64 retry_times[3];
+
+static gboolean share_retry_allowed(void)
+{
+    gint64 now = g_get_monotonic_time();
+    guint recent = 0;
+    for (guint i = 0; i < G_N_ELEMENTS(retry_times); i++)
+        if (retry_times[i] && now - retry_times[i] < 30 * G_USEC_PER_SEC)
+            recent++;
+    if (recent >= G_N_ELEMENTS(retry_times))
+        return FALSE;
+    memmove(retry_times + 1, retry_times, sizeof retry_times - sizeof retry_times[0]);
+    retry_times[0] = now;
+    return TRUE;
+}
+
+static gboolean share_restart_later(gpointer data)
+{
+    App *app = data;
+    if (!app->client || app->pipeline)
+        return G_SOURCE_REMOVE;     /* iPad sudah pergi, atau aliran sudah jalan lagi */
+    GError *err = NULL;
+    if (!share_start(app, &err)) {
+        JsonBuilder *b = json_builder_new();
+        json_builder_begin_object(b);
+        json_builder_set_member_name(b, "type");
+        json_builder_add_string_value(b, "error");
+        json_builder_set_member_name(b, "message");
+        json_builder_add_string_value(b, err->message);
+        json_builder_end_object(b);
+        server_send(app, b);
+        g_object_unref(b);
+        tsunagu_event("error", "message", err->message, NULL);
+        g_error_free(err);
+    }
+    return G_SOURCE_REMOVE;
+}
+#endif
+
 static gboolean on_bus(GstBus *bus, GstMessage *m, gpointer data)
 {
     Session *s = data;
@@ -382,19 +427,41 @@ static gboolean on_bus(GstBus *bus, GstMessage *m, gpointer data)
         json_builder_set_member_name(b, "message");
         json_builder_add_string_value(b, text);
         json_builder_end_object(b);
+#ifndef G_OS_WIN32
         server_send(s->app, b);
         g_object_unref(b);
+#endif
+#ifdef G_OS_WIN32
+        /* Di Windows tangkapan layar bisa putus karena hal yang wajar: tata
+         * letak monitor berubah, layar dikunci, atau pindah ke layar login.
+         * Alirannya dinyalakan lagi sendiri beberapa kali; halaman iPad
+         * menerima offer baru tanpa perlu disentuh. */
+        App *app = s->app;
+        share_stop(app);
+        if (share_retry_allowed()) {
+            tsunagu_event("warning", "message", text, NULL);
+            g_timeout_add_seconds(1, share_restart_later, app);
+        } else {
+            server_send(app, b);
+            tsunagu_event("error", "message", text, NULL);
+        }
+        g_object_unref(b);
+        g_free(text);
+        return G_SOURCE_REMOVE;
+#else
         tsunagu_event("error", "message", text, NULL);
         g_free(text);
 
         share_stop(s->app);
         return G_SOURCE_REMOVE;
+#endif
     }
     return G_SOURCE_CONTINUE;
 }
 
 /* ---------- API ---------- */
 
+#ifndef G_OS_WIN32
 static gboolean place_virtual_monitor(gpointer data)
 {
     Session *s = data;
@@ -410,6 +477,8 @@ static gboolean place_virtual_monitor(gpointer data)
     }
     return G_SOURCE_REMOVE;
 }
+
+#endif
 
 /* Pengukur bawaan untuk mencari sumber patah-patah: laju frame di dua titik
  * dan jarak terlama antar frame, yang justru paling terasa di mata. */
@@ -461,6 +530,7 @@ static void meter_attach(GstElement *pipeline, const char *name, Meter *m)
     gst_object_unref(el);
 }
 
+#ifndef G_OS_WIN32
 /* Layar yang diam tidak perlu di-encode ulang 30 kali per detik. Frame identik
  * dibuang sebelum sampai ke encoder, kecuali beberapa frame pertama dan satu
  * dari tiap IDLE_EVERY: itu menjaga gambar tetap menajam, dan iPad tidak
@@ -521,6 +591,9 @@ static void idle_skip_attach(GstElement *pipeline)
     gst_object_unref(el);
 }
 
+#endif
+
+#ifndef G_OS_WIN32
 /* ---------- layar kedua: gambar + kursor asli dari laptop ---------- */
 
 /* Monitor virtual Mutter hanya digambar ulang kalau isinya berubah, jadi
@@ -770,6 +843,8 @@ static void feed_clear(void)
     g_mutex_unlock(&feed.lock);
 }
 
+#endif /* !G_OS_WIN32 */
+
 gboolean share_start(App *app, GError **error)
 {
     share_stop(app);
@@ -778,6 +853,47 @@ gboolean share_start(App *app, GError **error)
     app->kbps_now = encoder_can_retune(app->enc_name) ? MIN(app->kbps, KBPS_START) : app->kbps;
 
     char *src;
+#ifdef G_OS_WIN32
+    if (app->test_source) {
+        src = g_strdup_printf("videotestsrc is-live=true pattern=ball ! "
+                              "video/x-raw,format=BGRx,width=%d,height=%d,framerate=%d/1",
+                              app->rw, app->rh, app->fps);
+    } else {
+        /* Monitor dicari lagi lewat namanya setiap kali aliran dimulai:
+         * handle-nya bisa berganti setelah tata letak layar diubah, dan layar
+         * kedua bisa sudah digeser pengguna di Pengaturan Tampilan.
+         *
+         * DXGI Desktop Duplication menyalin layar di GPU dan mengulang frame
+         * terakhir bila layar diam, jadi aliran tetap berdetak pada laju
+         * penuh. Kursor ikut digambar oleh elemennya sendiri. */
+        WinMonitor mon;
+        if (!win_monitor_by_device(app->monitor, &mon)) {
+            g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                        "Monitor %s tidak ditemukan", app->monitor ? app->monitor : "?");
+            return FALSE;
+        }
+        char *crop;
+        if (app->crop) {
+            crop = g_strdup_printf(" crop-x=%d crop-y=%d crop-width=%d crop-height=%d",
+                                   app->crop_x, app->crop_y, app->rw, app->rh);
+            app->rx = mon.x + app->crop_x;
+            app->ry = mon.y + app->crop_y;
+        } else {
+            crop = g_strdup("");
+            app->rx = mon.x;
+            app->ry = mon.y;
+            app->rw = mon.width;
+            app->rh = mon.height;
+        }
+        /* Tekstur GPU bila encoder-nya bisa membacanya; memori biasa hanya
+         * untuk encoder cadangan tanpa Direct3D. */
+        src = g_strdup_printf("d3d11screencapturesrc name=capture monitor-handle=%" G_GUINT64_FORMAT
+                              " show-cursor=%s%s ! capsfilter caps=\"video/x-raw(memory:D3D11Memory),"
+                              "framerate=%d/1; video/x-raw,framerate=%d/1\"",
+                              mon.handle, app->hide_cursor ? "false" : "true", crop, app->fps, app->fps);
+        g_free(crop);
+    }
+#else
     if (app->virtmon) {
         /* Ukuran monitor virtual mengikuti caps yang diminta di sini. Layar
          * kedua sering diam, dan aliran yang berhenti membuat dekoder di iPad
@@ -856,6 +972,7 @@ gboolean share_start(App *app, GError **error)
         src = g_strdup_printf("ximagesrc use-damage=false show-pointer=true "
                               "startx=%d starty=%d endx=%d endy=%d ! video/x-raw,framerate=%d/1",
                               app->rx, app->ry, app->rx + app->rw - 1, app->ry + app->rh - 1, app->fps);
+#endif /* G_OS_WIN32 */
     char *enc = encoder_fragment(app->enc_name, app->out_w, app->out_h, app->fps,
                                  app->kbps_now, app->kbps);
 
@@ -890,6 +1007,7 @@ gboolean share_start(App *app, GError **error)
     app->pay = gst_bin_get_by_name(GST_BIN(pipeline), "pay");
     app->enc = gst_bin_get_by_name(GST_BIN(pipeline), "enc");
     app->offer_sent = FALSE;
+#ifndef G_OS_WIN32
     if (app->virtmon) {
         GstElement *feedsrc = gst_bin_get_by_name(GST_BIN(pipeline), "feed");
         if (feedsrc) {
@@ -912,6 +1030,7 @@ gboolean share_start(App *app, GError **error)
         g_mutex_unlock(&feed.lock);
 
     }
+#endif
     playout_delay_attach(app->pay);
 
     Session *s = g_atomic_rc_box_new0(Session);
@@ -972,15 +1091,19 @@ gboolean share_start(App *app, GError **error)
         meter_attach(pipeline, "pay", &meter_enc);
     }
 
-    /* Hanya jalur X11: frame PipeWire bisa berupa DMA-BUF yang mahal dibaca CPU. */
+#ifndef G_OS_WIN32
+    /* Hanya jalur X11: frame PipeWire bisa berupa DMA-BUF yang mahal dibaca CPU.
+     * Di Windows frame berada di memori GPU, jadi pembandingan ini dilewati. */
     if (!app->virtmon && !app->portal)
         idle_skip_attach(pipeline);
+#endif
 
     if (gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
         share_stop(app);
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Pipeline tidak bisa dijalankan");
         return FALSE;
     }
+#ifndef G_OS_WIN32
     if (app->virtmon) {
         /* Aliran baru dibaca setelah pipeline berjalan: appsrc memberi cap waktu
          * dari jam pipeline, dan sebelum PLAYING cap waktunya belum berlaku. */
@@ -1002,6 +1125,7 @@ gboolean share_start(App *app, GError **error)
         g_timeout_add_full(G_PRIORITY_DEFAULT, 400, place_virtual_monitor, session_ref(s),
                            session_unref);
     }
+#endif
     tsunagu_event("stream", "state", "starting", NULL);
     return TRUE;
 }
@@ -1026,7 +1150,9 @@ void share_stop(App *app)
         session_unref(current);
         current = NULL;
     }
+#ifndef G_OS_WIN32
     feed_clear();
+#endif
     gst_element_set_state(app->pipeline, GST_STATE_NULL);
     gst_clear_object(&app->enc);
     gst_clear_object(&app->pay);

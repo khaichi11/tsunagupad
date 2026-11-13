@@ -17,6 +17,7 @@ typedef struct _Client Client;
 typedef struct _Portal Portal;
 typedef struct _Virtmon Virtmon;
 typedef struct _Pwcap Pwcap;
+typedef struct _Vdisp Vdisp;        /* Windows: layar kedua lewat driver layar virtual */
 
 /* Satu pembaruan dari aliran monitor virtual: bisa berisi gambar layar, data
  * kursor, atau keduanya. Penunjuk di dalamnya hanya berlaku selama callback. */
@@ -48,6 +49,13 @@ typedef struct {
     gboolean test_source;
     char *web_dir;
     char *token;
+#ifdef G_OS_WIN32
+    char *monitor;              /* nama GDI monitor yang dibagikan, mis. \\.\DISPLAY1 */
+    Vdisp *vdisp;               /* layar kedua (monitor virtual); NULL bila membagikan monitor biasa */
+    gboolean hide_cursor;       /* --cursor lokal */
+    int crop_x, crop_y;         /* --region: potongan di dalam monitor */
+    gboolean crop;
+#endif
 
     /* hasil turunan dari opsi */
     int out_w, out_h, fps;
