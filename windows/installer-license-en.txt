@@ -1,0 +1,52 @@
+Tsunagu-Pad
+Copyright (c) 2026 Tsunagu-Pad contributors
+Released under the MIT License (full text below).
+
+DISCLAIMER
+
+This is an experimental hobby project provided free of charge and without any
+warranty. The installer changes system settings: it opens Windows Firewall for
+tsunagupad.exe and uxplay.exe (local subnet and Tailscale only), and, when
+selected:
+
+- installs Tsunagu-Pad's own second screen driver. It runs in user mode, not
+  in the kernel. It is signed on this computer with a one-time certificate
+  whose private key is deleted right away, and that certificate is removed
+  again when Tsunagu-Pad is uninstalled;
+- installs a Windows service;
+- adds the tsunagupad command to PATH.
+
+Anyone holding the access key (QR code) can see and control this computer's
+screen, so do not share it. Use it on your own network with a strong Wi-Fi
+password.
+
+THIRD PARTY COMPONENTS
+
+The installer includes third party components under their own licenses:
+GStreamer and its libraries (LGPL), x264 (GPL-2.0-or-later), FFmpeg (LGPL),
+and UxPlay (GPL-3.0-or-later). The second screen driver is based on a
+Microsoft driver sample under the Microsoft Public License (MS-PL). The license
+texts and source locations are in the "licenses" folder of the installation.
+Apple, iPad, Apple Pencil, and AirPlay are trademarks of Apple Inc.;
+Tsunagu-Pad is not affiliated with Apple.
+
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

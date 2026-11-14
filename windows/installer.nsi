@@ -2,6 +2,9 @@
 ; Dibangun oleh windows/build.sh:
 ;   makensis -DVERSION=0.2.0 -DSTAGE=...\stage -DROOT=... -DOUTFILE=...\setup.exe windows/installer.nsi
 ;
+; Pemasang dibuka dengan pilihan bahasa: English atau Bahasa Indonesia.
+; Semua teksnya ada di bagian "teks" di bawah, dalam kedua bahasa.
+;
 ; SPDX-License-Identifier: MIT
 
 Unicode true
@@ -21,6 +24,7 @@ SetCompressor /SOLID lzma
 
 !define APP "Tsunagu-Pad"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Tsunagu-Pad"
+!define OUR_KEY "Software\TsunaguPad"
 
 !include "MUI2.nsh"
 !include "x64.nsh"
@@ -34,27 +38,34 @@ InstallDir "$PROGRAMFILES64\${APP}"
 InstallDirRegKey HKLM "${UNINST_KEY}" "InstallLocation"
 BrandingText "${APP} ${VERSION}"
 VIProductVersion "${VERSION}.0"
-VIAddVersionKey "ProductName" "${APP}"
-VIAddVersionKey "FileDescription" "Pemasang ${APP}"
-VIAddVersionKey "FileVersion" "${VERSION}"
-VIAddVersionKey "ProductVersion" "${VERSION}"
-VIAddVersionKey "LegalCopyright" "MIT License"
+VIAddVersionKey /LANG=0 "ProductName" "${APP}"
+VIAddVersionKey /LANG=0 "FileDescription" "${APP} Setup"
+VIAddVersionKey /LANG=0 "FileVersion" "${VERSION}"
+VIAddVersionKey /LANG=0 "ProductVersion" "${VERSION}"
+VIAddVersionKey /LANG=0 "LegalCopyright" "MIT License"
 
 !define MUI_ICON "${ROOT}\build\tsunagupad.ico"
 !define MUI_UNICON "${ROOT}\build\tsunagupad.ico"
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "Tsunagu-Pad ${VERSION}"
-!define MUI_WELCOMEPAGE_TEXT "Tsunagu-Pad menjadikan iPad layar sentuh untuk Windows, layar kedua tanpa kabel, dan sebaliknya menampilkan layar iPad di Windows lewat AirPlay.$\r$\n$\r$\nSemuanya berjalan di jaringan lokal Anda sendiri. Tidak ada yang diunggah ke server mana pun, dan iPad tidak perlu memasang aplikasi apa pun.$\r$\n$\r$\nPemasang ini juga membuka firewall Windows untuk jaringan lokal dan Tailscale saja, serta (bila dipilih) memasang driver layar virtual dan layanan untuk layar login."
+!define MUI_WELCOMEPAGE_TEXT "$(WelcomeText)"
 !define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT "Jalankan Tsunagu-Pad sekarang"
+!define MUI_FINISHPAGE_RUN_TEXT "$(RunText)"
 !define MUI_FINISHPAGE_RUN_FUNCTION LaunchTray
 !define MUI_FINISHPAGE_SHOWREADME "https://github.com/khaichi11/tsunagupad#windows"
-!define MUI_FINISHPAGE_SHOWREADME_TEXT "Buka panduan pemakaian"
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "$(ReadmeText)"
 !define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
 !define MUI_COMPONENTSPAGE_SMALLDESC
 
+; Pilihan bahasa di awal; pilihannya diingat untuk penghapusan.
+!define MUI_LANGDLL_WINDOWTITLE "${APP}"
+!define MUI_LANGDLL_INFO "Choose a language / Pilih bahasa"
+!define MUI_LANGDLL_REGISTRY_ROOT "HKLM"
+!define MUI_LANGDLL_REGISTRY_KEY "${OUR_KEY}"
+!define MUI_LANGDLL_REGISTRY_VALUENAME "InstallerLanguage"
+
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "${ROOT}\windows\installer-license.txt"
+!insertmacro MUI_PAGE_LICENSE "$(LicenseFile)"
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -63,8 +74,58 @@ VIAddVersionKey "LegalCopyright" "MIT License"
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 
-!insertmacro MUI_LANGUAGE "Indonesian"
 !insertmacro MUI_LANGUAGE "English"
+!insertmacro MUI_LANGUAGE "Indonesian"
+!insertmacro MUI_RESERVEFILE_LANGDLL
+
+; ---------------------------------------------------------------- teks
+
+LicenseLangString LicenseFile ${LANG_ENGLISH} "${ROOT}\windows\installer-license-en.txt"
+LicenseLangString LicenseFile ${LANG_INDONESIAN} "${ROOT}\windows\installer-license-id.txt"
+
+LangString WelcomeText ${LANG_ENGLISH} "Tsunagu-Pad turns an iPad into a touch screen for Windows, a second screen with no cable, and the other way round shows the iPad screen on Windows over AirPlay.$\r$\n$\r$\nEverything runs on your own local network. Nothing is uploaded to any server, and the iPad needs no app.$\r$\n$\r$\nThis installer also opens Windows Firewall for the local network and Tailscale only, and when selected installs the second screen driver and a service for the sign-in screen."
+LangString WelcomeText ${LANG_INDONESIAN} "Tsunagu-Pad menjadikan iPad layar sentuh untuk Windows, layar kedua tanpa kabel, dan sebaliknya menampilkan layar iPad di Windows lewat AirPlay.$\r$\n$\r$\nSemuanya berjalan di jaringan lokal Anda sendiri. Tidak ada yang diunggah ke server mana pun, dan iPad tidak perlu memasang aplikasi apa pun.$\r$\n$\r$\nPemasang ini juga membuka firewall Windows untuk jaringan lokal dan Tailscale saja, serta (bila dipilih) memasang driver layar kedua dan layanan untuk layar login."
+LangString RunText ${LANG_ENGLISH} "Start Tsunagu-Pad now"
+LangString RunText ${LANG_INDONESIAN} "Jalankan Tsunagu-Pad sekarang"
+LangString ReadmeText ${LANG_ENGLISH} "Open the user guide"
+LangString ReadmeText ${LANG_INDONESIAN} "Buka panduan pemakaian"
+
+LangString SecCoreName ${LANG_ENGLISH} "Tsunagu-Pad (required)"
+LangString SecCoreName ${LANG_INDONESIAN} "Tsunagu-Pad (wajib)"
+LangString SecDisplayName ${LANG_ENGLISH} "Second screen (Tsunagu-Pad driver)"
+LangString SecDisplayName ${LANG_INDONESIAN} "Layar kedua (driver Tsunagu-Pad)"
+LangString SecServiceName ${LANG_ENGLISH} "Sign-in screen and next session service"
+LangString SecServiceName ${LANG_INDONESIAN} "Layanan layar login dan sesi berikutnya"
+LangString SecPathName ${LANG_ENGLISH} "tsunagupad command in the terminal (PATH)"
+LangString SecPathName ${LANG_INDONESIAN} "Perintah tsunagupad di terminal (PATH)"
+
+LangString DESC_Core ${LANG_ENGLISH} "Program, tray panel, iPad page, AirPlay (UxPlay), and firewall rules for the local network."
+LangString DESC_Core ${LANG_INDONESIAN} "Program, panel di area notifikasi, halaman iPad, AirPlay (UxPlay), dan aturan firewall untuk jaringan lokal."
+LangString DESC_Display ${LANG_ENGLISH} "Tsunagu-Pad's own virtual monitor driver, so the iPad can be a second screen. Signed on this computer; no third party involved."
+LangString DESC_Display ${LANG_INDONESIAN} "Driver monitor virtual milik Tsunagu-Pad sendiri, supaya iPad bisa jadi layar kedua. Ditandatangani di komputer ini, tanpa pihak ketiga."
+LangString DESC_Service ${LANG_ENGLISH} "Shows the sign-in screen on the iPad and starts it at the next session (when enabled in the panel)."
+LangString DESC_Service ${LANG_INDONESIAN} "Menampilkan layar login di iPad dan menyalakan iPad otomatis di sesi berikutnya (bila diaktifkan di panel)."
+LangString DESC_Path ${LANG_ENGLISH} "Adds tsunagupad to PATH for use from a terminal or SSH."
+LangString DESC_Path ${LANG_INDONESIAN} "Menambahkan tsunagupad ke PATH supaya perintahnya bisa dipakai dari terminal atau SSH."
+
+LangString MsgNeed64 ${LANG_ENGLISH} "Tsunagu-Pad for Windows needs 64-bit Windows 10 or 11."
+LangString MsgNeed64 ${LANG_INDONESIAN} "Tsunagu-Pad untuk Windows butuh Windows 10/11 64-bit."
+LangString MsgDisplayFailed ${LANG_ENGLISH} "The second screen driver could not be installed (code $0). Everything else works; run this installer again to retry the second screen."
+LangString MsgDisplayFailed ${LANG_INDONESIAN} "Driver layar kedua gagal dipasang (kode $0). Fitur lain tetap berjalan; jalankan pemasang ini sekali lagi untuk mencoba layar kedua lagi."
+
+LangString DetailOldDriver ${LANG_ENGLISH} "Removing the virtual display driver of an earlier version (if any)"
+LangString DetailOldDriver ${LANG_INDONESIAN} "Melepas driver layar virtual dari versi sebelumnya (bila ada)"
+LangString DetailFirewall ${LANG_ENGLISH} "Opening Windows Firewall for the local network and Tailscale"
+LangString DetailFirewall ${LANG_INDONESIAN} "Membuka Windows Firewall untuk jaringan lokal dan Tailscale"
+LangString DetailDisplay ${LANG_ENGLISH} "Signing and installing the second screen driver"
+LangString DetailDisplay ${LANG_INDONESIAN} "Menandatangani dan memasang driver layar kedua"
+LangString DetailService ${LANG_ENGLISH} "Installing the Tsunagu-Pad service"
+LangString DetailService ${LANG_INDONESIAN} "Memasang layanan Tsunagu-Pad"
+
+LangString ShortcutToggle ${LANG_ENGLISH} "Tsunagu-Pad - Turn on or off"
+LangString ShortcutToggle ${LANG_INDONESIAN} "Tsunagu-Pad - Nyalakan atau matikan"
+LangString ShortcutUninstall ${LANG_ENGLISH} "Uninstall Tsunagu-Pad"
+LangString ShortcutUninstall ${LANG_INDONESIAN} "Hapus Tsunagu-Pad"
 
 ; ---------------------------------------------------------------- pemasangan
 
@@ -81,20 +142,24 @@ VIAddVersionKey "LegalCopyright" "MIT License"
   Pop $0
 !macroend
 
-Section "Tsunagu-Pad (wajib)" SecCore
+Section "$(SecCoreName)" SecCore
   SectionIn RO
-  ${IfNot} ${RunningX64}
-    MessageBox MB_ICONSTOP "Tsunagu-Pad untuk Windows butuh Windows 10/11 64-bit."
-    Abort
-  ${EndIf}
   SetShellVarContext all
   !insertmacro StopEverything
 
   SetOutPath "$INSTDIR"
-  ; Sisa versi sebelumnya (plugin yang sudah tidak dipakai) dibersihkan dulu.
+  ; Sisa versi sebelumnya (plugin yang sudah tidak dipakai, driver lama) dibersihkan dulu.
   RMDir /r "$INSTDIR\lib"
   RMDir /r "$INSTDIR\share"
+  RMDir /r "$INSTDIR\drivers"
   File /r "${STAGE}\*"
+
+  ; Versi 0.2.0 bisa memasang Virtual Display Driver (ditandatangani SignPath
+  ; Foundation). Driver itu dilepas bila dulu dipasang oleh Tsunagu-Pad;
+  ; driver yang dipasang sendiri oleh pengguna dibiarkan.
+  DetailPrint "$(DetailOldDriver)"
+  nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup vdd-remove'
+  Pop $0
 
   ; Versi 0.2.0 menaruh folder bin (berisi ratusan DLL, termasuk OpenSSL)
   ; di PATH sistem; program lain bisa ikut memuat DLL itu. Entri lama dihapus.
@@ -102,15 +167,16 @@ Section "Tsunagu-Pad (wajib)" SecCore
   Pop $0
 
   ; Firewall: hanya subnet lokal dan Tailscale yang boleh masuk.
-  DetailPrint "Membuka Windows Firewall untuk jaringan lokal dan Tailscale"
+  DetailPrint "$(DetailFirewall)"
   nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup firewall-add'
   Pop $0
 
+  RMDir /r "$SMPROGRAMS\${APP}"
   CreateDirectory "$SMPROGRAMS\${APP}"
   CreateShortCut "$SMPROGRAMS\${APP}\${APP}.lnk" "$INSTDIR\bin\tsunagupad-tray.exe" "" "$INSTDIR\bin\tsunagupad-tray.exe" 0
   ; Bisa di-pin ke Start atau taskbar: satu klik menyalakan atau mematikan berbagi layar.
-  CreateShortCut "$SMPROGRAMS\${APP}\${APP} - Nyalakan atau matikan.lnk" "$INSTDIR\bin\tsunagupad-tray.exe" "--toggle" "$INSTDIR\bin\tsunagupad-tray.exe" 0
-  CreateShortCut "$SMPROGRAMS\${APP}\Hapus ${APP}.lnk" "$INSTDIR\uninstall.exe"
+  CreateShortCut "$SMPROGRAMS\${APP}\$(ShortcutToggle).lnk" "$INSTDIR\bin\tsunagupad-tray.exe" "--toggle" "$INSTDIR\bin\tsunagupad-tray.exe" 0
+  CreateShortCut "$SMPROGRAMS\${APP}\$(ShortcutUninstall).lnk" "$INSTDIR\uninstall.exe"
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "${APP}"
@@ -125,28 +191,32 @@ Section "Tsunagu-Pad (wajib)" SecCore
   WriteRegDWORD HKLM "${UNINST_KEY}" "NoRepair" 1
 SectionEnd
 
-Section "Layar kedua (driver layar virtual)" SecVdd
-  ; Virtual Display Driver (MIT) menyediakan monitor tanpa kabel untuk iPad.
-  ; Windows dapat menampilkan konfirmasi "pasang perangkat lunak perangkat ini";
-  ; penerbitnya SignPath Foundation atas nama proyek Virtual Display Driver.
-  DetailPrint "Memasang driver layar virtual (Windows mungkin meminta konfirmasi)"
-  nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup vdd-install "$INSTDIR\drivers\vdd"'
+!if /FileExists "${STAGE}\drivers\display\TsunaguPadDisplay.inf"
+Section "$(SecDisplayName)" SecDisplay
+  ; Driver Indirect Display milik Tsunagu-Pad (windows/driver). Tanda tangan
+  ; katalognya dibuat di sini dengan sertifikat sekali pakai yang kunci
+  ; rahasianya langsung dihapus (windows/display-install.ps1).
+  DetailPrint "$(DetailDisplay)"
+  ${DisableX64FSRedirection}
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\share\tsunagupad\display-install.ps1" -DriverDir "$INSTDIR\drivers\display" -Exe "$INSTDIR\bin\tsunagupad.exe"'
   Pop $0
+  ${EnableX64FSRedirection}
   ${If} $0 == 3010
     SetRebootFlag true
   ${ElseIf} $0 != 0
-    MessageBox MB_ICONEXCLAMATION|MB_OK "Driver layar virtual gagal dipasang (kode $0). Fitur lain tetap berjalan; layar kedua bisa dicoba lagi dengan menjalankan pemasang ini sekali lagi."
+    MessageBox MB_ICONEXCLAMATION|MB_OK "$(MsgDisplayFailed)" /SD IDOK
   ${EndIf}
 SectionEnd
+!endif
 
-Section "Layanan layar login dan sesi berikutnya" SecService
+Section "$(SecServiceName)" SecService
   ; Tidak melakukan apa pun sampai sakelar "iPad aktif di sesi berikutnya" dinyalakan di panel.
-  DetailPrint "Memasang layanan Tsunagu-Pad"
+  DetailPrint "$(DetailService)"
   nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" service install'
   Pop $0
 SectionEnd
 
-Section "Perintah tsunagupad di terminal (PATH)" SecPath
+Section "$(SecPathName)" SecPath
   ; Hanya folder kecil berisi satu peluncur yang masuk PATH, bukan folder
   ; bin beserta DLL-nya, supaya program lain tidak ikut memuat DLL kita.
   CreateDirectory "$INSTDIR\cmd"
@@ -157,35 +227,34 @@ Section "Perintah tsunagupad di terminal (PATH)" SecPath
   Pop $0
 SectionEnd
 
-LangString DESC_Core ${LANG_INDONESIAN} "Program, panel di area notifikasi, halaman iPad, AirPlay (UxPlay), dan aturan firewall untuk jaringan lokal."
-LangString DESC_Vdd ${LANG_INDONESIAN} "Monitor virtual supaya iPad bisa jadi layar kedua, bukan hanya cermin layar yang ada."
-LangString DESC_Service ${LANG_INDONESIAN} "Menampilkan layar login di iPad dan menyalakan iPad otomatis di sesi berikutnya (bila diaktifkan di panel)."
-LangString DESC_Path ${LANG_INDONESIAN} "Menambahkan tsunagupad ke PATH supaya perintahnya bisa dipakai dari terminal atau SSH."
-LangString DESC_Core ${LANG_ENGLISH} "Program, tray panel, iPad page, AirPlay (UxPlay), and firewall rules for the local network."
-LangString DESC_Vdd ${LANG_ENGLISH} "A virtual monitor so the iPad can be a second screen, not only a mirror."
-LangString DESC_Service ${LANG_ENGLISH} "Shows the sign-in screen on the iPad and starts it at the next session (when enabled in the panel)."
-LangString DESC_Path ${LANG_ENGLISH} "Adds tsunagupad to PATH for use from a terminal or SSH."
-
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecCore} $(DESC_Core)
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecVdd} $(DESC_Vdd)
+  !if /FileExists "${STAGE}\drivers\display\TsunaguPadDisplay.inf"
+    !insertmacro MUI_DESCRIPTION_TEXT ${SecDisplay} $(DESC_Display)
+  !endif
   !insertmacro MUI_DESCRIPTION_TEXT ${SecService} $(DESC_Service)
   !insertmacro MUI_DESCRIPTION_TEXT ${SecPath} $(DESC_Path)
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Function .onInit
   SetRegView 64
+  ${IfNot} ${Silent}
+    !insertmacro MUI_LANGDLL_DISPLAY
+  ${EndIf}
   ${IfNot} ${RunningX64}
-    MessageBox MB_ICONSTOP "Tsunagu-Pad untuk Windows butuh Windows 10/11 64-bit."
+    MessageBox MB_ICONSTOP "$(MsgNeed64)"
     Abort
   ${EndIf}
-  ; Pemasangan tanpa tampilan bisa melewati komponen: /S /NOVDD /NOSERVICE /NOPATH
+  ; Pemasangan tanpa tampilan bisa melewati komponen: /S /NODISPLAY /NOSERVICE /NOPATH
+  ; (/NOVDD dari versi lama masih diterima dan tidak berpengaruh).
   ${GetParameters} $R0
   ClearErrors
-  ${GetOptions} $R0 "/NOVDD" $R1
+  ${GetOptions} $R0 "/NODISPLAY" $R1
+  !if /FileExists "${STAGE}\drivers\display\TsunaguPadDisplay.inf"
   ${IfNot} ${Errors}
-    !insertmacro UnselectSection ${SecVdd}
+    !insertmacro UnselectSection ${SecDisplay}
   ${EndIf}
+  !endif
   ClearErrors
   ${GetOptions} $R0 "/NOSERVICE" $R1
   ${IfNot} ${Errors}
@@ -208,18 +277,21 @@ FunctionEnd
 
 Function un.onInit
   SetRegView 64
+  !insertmacro MUI_UNGETLANGUAGE
 FunctionEnd
 
 Section "Uninstall"
   SetShellVarContext all
   !insertmacro StopEverything
   ; Monitor virtual dilepas, layanan dan aturan firewall dihapus, lalu driver
-  ; layar virtual dilepas bila dulu dipasang oleh Tsunagu-Pad sendiri.
+  ; layar kedua beserta sertifikatnya dan driver lama (bila ada) dilepas.
   nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" second-off'
   Pop $0
   nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" service uninstall'
   Pop $0
   nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup firewall-remove'
+  Pop $0
+  nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup display-remove'
   Pop $0
   nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup vdd-remove'
   Pop $0
@@ -246,4 +318,5 @@ Section "Uninstall"
   RMDir /r "$LOCALAPPDATA\tsunagupad"
 
   DeleteRegKey HKLM "${UNINST_KEY}"
+  DeleteRegKey HKLM "${OUR_KEY}"
 SectionEnd
