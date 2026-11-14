@@ -16,10 +16,10 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
       - name: Paket build
         run: |
           sudo apt-get update
@@ -38,7 +38,7 @@ jobs:
           kill %1
       - name: Paket .deb
         run: tool/build_deb.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tsunagupad-ubuntu
           path: dist/*.deb
@@ -49,10 +49,10 @@ jobs:
       run:
         shell: msys2 {0}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
@@ -74,6 +74,13 @@ jobs:
           $exe = "$env:ProgramFiles\Tsunagu-Pad\bin\tsunagupad.exe"
           if (-not (Test-Path $exe)) { throw "tsunagupad.exe tidak terpasang" }
           & $exe --version
+          # Hanya folder kecil berisi peluncur yang masuk PATH, bukan bin beserta DLL-nya.
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+          if ($machinePath -notmatch [regex]::Escape("$env:ProgramFiles\Tsunagu-Pad\cmd")) { throw "folder cmd tidak ada di PATH" }
+          if ($machinePath -match [regex]::Escape("$env:ProgramFiles\Tsunagu-Pad\bin")) { throw "folder bin masih ada di PATH" }
+          & "$env:ProgramFiles\Tsunagu-Pad\cmd\tsunagupad.cmd" capabilities
+          if ($LASTEXITCODE -ne 0) { throw "peluncur tsunagupad.cmd gagal" }
+          if (-not (Test-Path "$env:ProgramFiles\Tsunagu-Pad\lib\gstreamer-1.0\libgstlevel.dll")) { throw "plugin level (dibutuhkan UxPlay) tidak ikut" }
           & $exe capabilities
           & $exe probe
           & $exe hotspot status
@@ -101,14 +108,57 @@ jobs:
           $rc = $LASTEXITCODE
           Stop-Process -Id $p.Id -Force
           exit $rc
+      - name: Uji penerima AirPlay (tetap jalan dan bisa ditemukan lewat mDNS)
+        shell: pwsh
+        run: |
+          $exe = "$env:ProgramFiles\Tsunagu-Pad\bin\tsunagupad.exe"
+          # Di Windows, mDNS UxPlay hanya mengumumkan di satu adaptor; adaptor
+          # runner (Hyper-V) dilewati UxPlay, jadi dipilih lewat tambalan kita.
+          $route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Sort-Object RouteMetric | Select-Object -First 1
+          $ip = (Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $route.InterfaceIndex | Select-Object -First 1).IPAddress
+          "alamat runner: $ip"
+          $env:UXPLAY_MDNS_IPV4 = $ip
+          $p = Start-Process -FilePath $exe -ArgumentList 'receive', '--name', 'CI-Test' `
+                 -RedirectStandardOutput recv.log -RedirectStandardError recv.err -PassThru -NoNewWindow
+          Start-Sleep -Seconds 12
+          $alive = -not $p.HasExited
+          Get-Content recv.log, recv.err -ErrorAction SilentlyContinue
+          if (-not $alive) { throw "penerima AirPlay berhenti sendiri (kode $($p.ExitCode))" }
+          if (-not (Get-NetTCPConnection -State Listen -LocalPort 7000 -ErrorAction SilentlyContinue)) { throw "port AirPlay 7000 tidak terbuka" }
+          # Satu kueri mDNS (PTR _airplay._tcp.local) dari port acak; UxPlay
+          # menjawab langsung ke port itu.
+          $q = [System.Collections.Generic.List[byte]]::new()
+          $q.AddRange([byte[]](0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+          foreach ($l in '_airplay', '_tcp', 'local') {
+            $b = [Text.Encoding]::ASCII.GetBytes($l); $q.Add([byte]$b.Length); $q.AddRange($b)
+          }
+          $q.Add(0); $q.AddRange([byte[]](0, 12, 0x80, 1))
+          $u = [Net.Sockets.UdpClient]::new([Net.IPEndPoint]::new([Net.IPAddress]::Parse($ip), 0))
+          $u.Client.SetSocketOption([Net.Sockets.SocketOptionLevel]::IP, [Net.Sockets.SocketOptionName]::MulticastInterface,
+                                    [Net.IPAddress]::Parse($ip).GetAddressBytes())
+          $u.Client.ReceiveTimeout = 2000
+          $found = $false
+          for ($try = 0; $try -lt 5 -and -not $found; $try++) {
+            [void]$u.Send($q.ToArray(), $q.Count, '224.0.0.251', 5353)
+            $deadline = (Get-Date).AddSeconds(2)
+            while ((Get-Date) -lt $deadline -and -not $found) {
+              try { $from = $null; $data = $u.Receive([ref]$from) } catch { break }
+              if ([Text.Encoding]::ASCII.GetString($data) -match 'CI-Test') { $found = $true; "jawaban mDNS dari $from" }
+            }
+          }
+          $u.Close()
+          Stop-Process -Id $p.Id -Force
+          Get-Process uxplay -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $found) { throw "penerima AirPlay tidak menjawab kueri mDNS" }
       - name: Hapus tanpa tampilan
         shell: pwsh
         run: |
           Start-Process -Wait -FilePath "$env:ProgramFiles\Tsunagu-Pad\uninstall.exe" -ArgumentList '/S', "_?=$env:ProgramFiles\Tsunagu-Pad"
           Remove-Item -Recurse -Force "$env:ProgramFiles\Tsunagu-Pad" -ErrorAction SilentlyContinue
           if (Get-Service TsunaguPad -ErrorAction SilentlyContinue) { throw "layanan masih ada" }
+          if ([Environment]::GetEnvironmentVariable('Path', 'Machine') -match 'Tsunagu-Pad') { throw "entri PATH masih ada" }
           if (Get-NetFirewallRule -DisplayName 'Tsunagu-Pad*' -ErrorAction SilentlyContinue) { throw "aturan firewall masih ada" }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tsunagupad-windows
           path: |
@@ -122,7 +172,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: out
       - name: Terbitkan
