@@ -97,6 +97,7 @@ void idle_inhibit_set(gboolean on);
 
 /* encoder.c */
 const char *encoder_pick(const char *wanted);
+const char *encoder_try(const char *name);
 char *encoder_fragment(const char *name, int w, int h, int fps, int kbps, int max_kbps);
 gboolean encoder_can_retune(const char *name);
 int encoder_bitrate_unit(const char *name);

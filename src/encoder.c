@@ -193,6 +193,13 @@ static gboolean probe(const Encoder *e)
     return ok;
 }
 
+/* Satu encoder tertentu, bila jalan di komputer ini. */
+const char *encoder_try(const char *name)
+{
+    const Encoder *e = find(name);
+    return e && probe(e) ? e->name : NULL;
+}
+
 const char *encoder_pick(const char *wanted)
 {
     if (wanted && g_strcmp0(wanted, "auto") != 0) {

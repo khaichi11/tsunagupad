@@ -531,6 +531,19 @@ static int cmd_share(int argc, char **argv)
             app.rh = mon.height;
         }
     }
+    /* Encoder di GPU yang menggambar monitornya. Dulu NVIDIA selalu dipilih
+     * lebih dulu; di laptop Optimus layar bawaan ada di GPU Intel, sehingga
+     * setiap frame disalin antar-GPU lewat memori biasa dan aliran tersendat. */
+    if (!app.test_source && (!app.encoder || g_str_equal(app.encoder, "auto"))) {
+        guint vendor = win_monitor_gpu_vendor(app.monitor);
+        const char *want = vendor == 0x8086 ? "intel" : vendor == 0x10DE ? "nvidia"
+                         : (vendor == 0x1002 || vendor == 0x1022) ? "amd" : NULL;
+        if (want && g_strcmp0(app.enc_name, want) != 0) {
+            const char *better = encoder_try(want);
+            if (better)
+                app.enc_name = better;
+        }
+    }
 #else
     if (!g_str_equal(app.backend, "auto") && !g_str_equal(app.backend, "x11") && !g_str_equal(app.backend, "portal"))
         return fail("Backend tidak dikenal (pilih auto, x11, atau portal)");

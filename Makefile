@@ -24,7 +24,7 @@ CFLAGS   += -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-in
 DAEMON_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(WIN_PKGS))
 DAEMON_LIBS   := $(shell $(PKG_CONFIG) --libs $(WIN_PKGS)) \
                  -liphlpapi -lws2_32 -lbcrypt -lsetupapi -lnewdev -lwtsapi32 -ladvapi32 \
-                 -lshell32 -luser32 -lgdi32 -lole32 -lcfgmgr32 -lm
+                 -lshell32 -luser32 -lgdi32 -lole32 -lcfgmgr32 -ldxgi -lm
 TRAY_CFLAGS   := $(shell $(PKG_CONFIG) --cflags glib-2.0 json-glib-1.0) -municode
 TRAY_LIBS     := $(shell $(PKG_CONFIG) --libs glib-2.0 json-glib-1.0) \
                  -liphlpapi -lshell32 -luser32 -lgdi32 -lws2_32 -ladvapi32

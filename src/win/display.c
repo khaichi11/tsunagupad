@@ -13,6 +13,9 @@
  * SPDX-License-Identifier: MIT
  */
 #include <windows.h>
+#define COBJMACROS
+#include <initguid.h>
+#include <dxgi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -394,6 +397,40 @@ static gboolean vdd_path(const Config *all, const Config *active, DISPLAYCONFIG_
         }
     }
     return FALSE;
+}
+
+/* Pabrikan GPU yang menggambar monitor ini menurut DXGI (0x8086 Intel,
+ * 0x10DE NVIDIA, 0x1002 AMD), 0 bila tidak diketahui. Di laptop dengan dua
+ * GPU, layar bawaan biasanya di GPU Intel dan monitor HDMI di NVIDIA; encoder
+ * di GPU yang sama dengan monitornya membaca frame tanpa salinan antar-GPU. */
+guint win_monitor_gpu_vendor(const char *device)
+{
+    if (!device)
+        return 0;
+    IDXGIFactory1 *factory = NULL;
+    if (FAILED(CreateDXGIFactory1(&IID_IDXGIFactory1, (void **) &factory)))
+        return 0;
+    guint vendor = 0;
+    IDXGIAdapter1 *adapter = NULL;
+    for (UINT i = 0; !vendor && IDXGIFactory1_EnumAdapters1(factory, i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
+        DXGI_ADAPTER_DESC1 ad;
+        memset(&ad, 0, sizeof ad);
+        IDXGIAdapter1_GetDesc1(adapter, &ad);
+        IDXGIOutput *output = NULL;
+        for (UINT k = 0; !vendor && IDXGIAdapter1_EnumOutputs(adapter, k, &output) != DXGI_ERROR_NOT_FOUND; k++) {
+            DXGI_OUTPUT_DESC od;
+            if (SUCCEEDED(IDXGIOutput_GetDesc(output, &od))) {
+                char *name = win_utf8(od.DeviceName);
+                if (g_ascii_strcasecmp(name, device) == 0)
+                    vendor = ad.VendorId;
+                g_free(name);
+            }
+            IDXGIOutput_Release(output);
+        }
+        IDXGIAdapter1_Release(adapter);
+    }
+    IDXGIFactory1_Release(factory);
+    return vendor;
 }
 
 gboolean vdisp_available(void)
