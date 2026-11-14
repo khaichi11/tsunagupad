@@ -96,6 +96,11 @@ Section "Tsunagu-Pad (wajib)" SecCore
   RMDir /r "$INSTDIR\share"
   File /r "${STAGE}\*"
 
+  ; Versi 0.2.0 menaruh folder bin (berisi ratusan DLL, termasuk OpenSSL)
+  ; di PATH sistem; program lain bisa ikut memuat DLL itu. Entri lama dihapus.
+  nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup path-remove "$INSTDIR\bin"'
+  Pop $0
+
   ; Firewall: hanya subnet lokal dan Tailscale yang boleh masuk.
   DetailPrint "Membuka Windows Firewall untuk jaringan lokal dan Tailscale"
   nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup firewall-add'
@@ -142,7 +147,13 @@ Section "Layanan layar login dan sesi berikutnya" SecService
 SectionEnd
 
 Section "Perintah tsunagupad di terminal (PATH)" SecPath
-  nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup path-add "$INSTDIR\bin"'
+  ; Hanya folder kecil berisi satu peluncur yang masuk PATH, bukan folder
+  ; bin beserta DLL-nya, supaya program lain tidak ikut memuat DLL kita.
+  CreateDirectory "$INSTDIR\cmd"
+  FileOpen $1 "$INSTDIR\cmd\tsunagupad.cmd" w
+  FileWrite $1 '@"%~dp0..\bin\tsunagupad.exe" %*$\r$\n'
+  FileClose $1
+  nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup path-add "$INSTDIR\cmd"'
   Pop $0
 SectionEnd
 
@@ -214,8 +225,11 @@ Section "Uninstall"
   Pop $0
   nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup path-remove "$INSTDIR\bin"'
   Pop $0
+  nsExec::ExecToLog '"$INSTDIR\bin\tsunagupad.exe" setup path-remove "$INSTDIR\cmd"'
+  Pop $0
 
   RMDir /r "$SMPROGRAMS\${APP}"
+  RMDir /r "$INSTDIR\cmd"
   RMDir /r "$INSTDIR\bin"
   RMDir /r "$INSTDIR\lib"
   RMDir /r "$INSTDIR\libexec"

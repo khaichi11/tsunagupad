@@ -295,7 +295,9 @@ memasang. Kata sandi administrator diminta sekali, dan ada empat bagian:
   bertanya sekali apakah perangkat lunak perangkat ini boleh dipasang.
 - **Layanan layar login dan sesi berikutnya**: layanan Windows yang tidak
   melakukan apa pun sampai sakelarnya dinyalakan di panel.
-- **`tsunagupad` di PATH**, untuk dipakai dari terminal atau lewat SSH.
+- **`tsunagupad` di PATH**, untuk dipakai dari terminal atau lewat SSH. Yang
+  masuk PATH hanya folder kecil berisi peluncur, bukan folder pustaka
+  programnya, supaya program lain tidak ikut memuatnya.
 
 Tersedia juga arsip `.zip` portabel untuk mesin yang tidak boleh dipasangi
 program; isinya program dan AirPlay, tanpa driver, layanan, dan aturan firewall.
@@ -306,20 +308,23 @@ Windows tidak mengizinkan aplikasi lain menambah tombol ke panel Quick
 Settings-nya, jadi Tsunagu-Pad membawa panel yang cara kerjanya sama. Ikonnya
 ada di samping jam, di sebelah ikon Quick Settings, dan dibuat selalu tampil,
 tidak tersembunyi di balik tanda `^`. Klik ikonnya, atau tekan `Ctrl+Alt+I` dari
-mana saja:
+mana saja. Semua pilihan ada di panel itu saja, yang bisa digulir bila
+layarnya pendek:
 
-- kotak **Tsunagu-Pad** menyalakan dan mematikan berbagi layar, dan bagian `>`
-  membuka semua pilihan (monitor, kualitas, kode akses baru, mulai otomatis
-  saat masuk Windows);
-- **iPad ke Windows** beralih ke penerima AirPlay;
-- **Layar kedua** menjadikan iPad layar kedua, dengan ukuran dan skala di `>`;
-- **Hotspot** menyalakan hotspot, dengan nama dan kata sandinya di `>`;
-- **Sesi berikutnya** membuat iPad tetap aktif di layar login dan sesi
-  berikutnya;
-- **Kualitas** memilih salah satu dari lima preset.
+- sakelar di atas menyalakan dan mematikan Tsunagu-Pad, dengan statusnya di
+  bawah nama;
+- **Windows ke iPad** atau **iPad ke Windows** memilih arah;
+- saat berbagi layar, QR untuk dipindai kamera iPad, alamatnya, dan tombol
+  untuk menyalin alamat atau membuat kode akses baru;
+- **Layar**: sakelar layar kedua dengan ukuran dan skalanya, monitor yang
+  dibagikan, dan preset kualitas;
+- **Hotspot**: sakelar hotspot, QR Wi-Fi-nya, serta nama dan kata sandinya,
+  diubah langsung di panel;
+- **Lainnya**: sesi berikutnya dan layar login, mulai otomatis saat masuk
+  Windows, dan keluar.
 
-Saat berbagi layar, panel menampilkan QR; pindai dengan kamera iPad. Panelnya
-mengikuti tema gelap atau terang Windows. Di menu Start juga ada
+Klik kanan pada ikonnya membuka panel yang sama; tidak ada menu terpisah.
+Panelnya mengikuti tema gelap atau terang Windows. Di menu Start juga ada
 *Tsunagu-Pad - Nyalakan atau matikan*, yang bisa di-pin ke Start atau taskbar
 untuk menyalakan dan mematikan dengan sekali klik. Kotak *Mobile hotspot* yang
 sudah ada di Quick Settings Windows mengendalikan hotspot yang sama dengan yang
@@ -333,9 +338,14 @@ dipakai Tsunagu-Pad.
   `tsunagupad share --second 1280x800 --scale 1.5`. Ukuran yang belum dikenal
   driver ditambahkan oleh layanan saat pertama dipakai.
 - **AirPlay.** Pilih *iPad ke Windows*, lalu di iPad buka Pusat Kontrol,
-  Pencerminan Layar, dan pilih **Tsunagu-Pad Windows**.
+  Pencerminan Layar, dan pilih **Tsunagu-Pad Windows**. Selama hotspot
+  menyala, penerimanya diumumkan di hotspot, tempat iPad tersambung.
+- **Jaringan kampus.** eduroam dan jaringan sejenis memisahkan perangkat satu
+  sama lain, jadi iPad tidak bisa menyambung ke laptop walau di Wi-Fi yang
+  sama. Panel memberi tahu bila laptop ada di jaringan seperti itu: nyalakan
+  hotspot dan sambungkan iPad ke sana.
 - **Hotspot.** *Hotspot langsung* menyalakan Mobile Hotspot Windows dan panel
-  menampilkan QR Wi-Fi-nya. Nama dan kata sandinya bisa diubah dari menu.
+  menampilkan QR Wi-Fi-nya. Nama dan kata sandinya diubah langsung di panel.
   Windows butuh sambungan Wi-Fi atau Ethernet untuk dibagikan sebelum
   hotspotnya bisa menyala.
 - **Layar login dan sesi berikutnya.** *iPad aktif di sesi berikutnya* meminta
