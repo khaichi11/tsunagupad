@@ -2,7 +2,9 @@
  * yang ikut terpasang bersama Tsunagu-Pad.
  *
  * UxPlay versi ini membawa penyiar mDNS sendiri, jadi Bonjour dari Apple
- * tidak perlu dipasang. Windows tidak punya execv yang menggantikan proses,
+ * tidak perlu dipasang. Penyiar itu hanya mengumumkan di satu adaptor
+ * jaringan; lewat tambalan kecil (windows/uxplay-mdns-interface.patch)
+ * adaptornya dipilih di sini. Windows tidak punya execv yang menggantikan proses,
  * jadi UxPlay dijalankan sebagai anak proses di dalam job object: bila proses
  * ini dihentikan dengan cara apa pun, UxPlay ikut berhenti.
  * SPDX-License-Identifier: MIT
@@ -105,6 +107,23 @@ int win_cmd_receive(const char *name, int fps, gboolean fullscreen, gboolean pin
     g_ptr_array_free(args, TRUE);
     g_free(fps_str);
 
+    /* Bila Mobile Hotspot menyala, iPad hampir pasti tersambung lewat situ
+     * (jaringan kampus seperti eduroam memblokir perangkat saling melihat),
+     * jadi iPad hanya bisa menemukan penerima ini bila diumumkan di sana.
+     * Tanpa tambalan, UxPlay selalu melewati adaptor hotspot. */
+    const char *network = "lan";
+    const char *preset = g_getenv("UXPLAY_MDNS_IPV4");
+    if (preset && *preset) {
+        network = "custom";
+    } else {
+        char *hotspot = win_hotspot_address();
+        if (hotspot) {
+            g_setenv("UXPLAY_MDNS_IPV4", hotspot, TRUE);
+            network = "hotspot";
+            g_free(hotspot);
+        }
+    }
+
     HANDLE job = CreateJobObjectW(NULL, NULL);
     if (job) {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limit;
@@ -136,7 +155,7 @@ int win_cmd_receive(const char *name, int fps, gboolean fullscreen, gboolean pin
     ResumeThread(pi.hThread);
     CloseHandle(pi.hThread);
     child = pi.hProcess;
-    tsunagu_event("receiver", "state", "starting", "name", name, NULL);
+    tsunagu_event("receiver", "state", "starting", "name", name, "network", network, NULL);
 
     SetConsoleCtrlHandler(on_ctrl, TRUE);
     HANDLE quit = win_create_quit_event();

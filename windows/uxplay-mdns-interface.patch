@@ -1,0 +1,21 @@
+diff --git a/lib/mdnsd/mdnsd.c b/lib/mdnsd/mdnsd.c
+index 97a1ba6..e3bc2d4 100644
+--- a/lib/mdnsd/mdnsd.c
++++ b/lib/mdnsd/mdnsd.c
+@@ -348,6 +348,16 @@ static int mdns_query_type_matches(uint16_t query_type, uint16_t record_type)
+ static uint32_t mdns_get_default_ipv4(void)
+ {
+     uint32_t addr = 0;
++    /* The program that starts uxplay may name the interface to announce on,
++     * e.g. a Windows Mobile Hotspot adapter, which the search below skips
++     * because it has no gateway and is a virtual adapter. */
++    const char *forced = getenv("UXPLAY_MDNS_IPV4");
++    if (forced && *forced) {
++        struct in_addr in;
++        if (inet_pton(AF_INET, forced, &in) == 1) {
++            return in.s_addr;
++        }
++    }
+ #ifdef _WIN32
+     ULONG buflen = 15000;
+     PIP_ADAPTER_ADDRESSES pAddresses = NULL;

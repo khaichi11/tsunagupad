@@ -38,6 +38,7 @@ typedef struct {
 char **win_init_process(int *argc, char **argv);
 gboolean win_random(guint8 *buf, gsize len);
 GPtrArray *win_local_addresses(void);
+char *win_hotspot_address(void);       /* alamat di Mobile Hotspot, NULL bila mati */
 char *win_find_web_dir(const char *given);
 char *win_install_dir(void);            /* folder induk dari bin\ */
 char *win_exe_path(void);
@@ -73,6 +74,7 @@ int win_cmd_monitors(void);
 void win_screen_watch(App *app, GMainLoop *loop, gboolean *changed);
 
 gboolean vdisp_available(void);
+guint win_monitor_gpu_vendor(const char *device);   /* 0x8086 Intel, 0x10DE NVIDIA, 0x1002 AMD */
 Vdisp *vdisp_open(int width, int height, double scale, GError **error);
 const char *vdisp_device(Vdisp *v);
 void vdisp_close(Vdisp *v);

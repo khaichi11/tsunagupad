@@ -1,0 +1,3 @@
+# Tambalan dan skrip shell harus tetap berakhiran LF, juga saat diambil di Windows.
+*.patch -text
+*.sh text eol=lf

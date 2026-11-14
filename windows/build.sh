@@ -38,13 +38,21 @@ make clean >/dev/null
 make -j"$(nproc)"
 
 say "Membangun UxPlay (penerima AirPlay)"
-if [[ ! -x $work/uxplay/build/uxplay.exe ]]; then
+# Tambalan: mDNS bawaan UxPlay di Windows hanya mengumumkan di satu adaptor
+# dan selalu melewati adaptor Mobile Hotspot. Tambalan ini membolehkan
+# Tsunagu-Pad memilih adaptornya (UXPLAY_MDNS_IPV4).
+uxplay_stamp="$UXPLAY_COMMIT $(sha256sum windows/uxplay-mdns-interface.patch | cut -d' ' -f1)"
+if [[ ! -x $work/uxplay/build/uxplay.exe || "$(cat "$work/uxplay/.tsunagupad-stamp" 2>/dev/null)" != "$uxplay_stamp" ]]; then
     rm -rf "$work/uxplay"
     git init -q "$work/uxplay"
+    git -C "$work/uxplay" config core.autocrlf false
     git -C "$work/uxplay" fetch -q --depth 1 "$UXPLAY_REPO" "$UXPLAY_COMMIT"
     git -C "$work/uxplay" checkout -q FETCH_HEAD
+    # Git for Windows bisa memberi CRLF pada berkas tambalan; baris LF dipakai.
+    tr -d '\r' < windows/uxplay-mdns-interface.patch | git -C "$work/uxplay" apply --ignore-whitespace -
     cmake -S "$work/uxplay" -B "$work/uxplay/build" -G Ninja -DCMAKE_BUILD_TYPE=Release
     ninja -C "$work/uxplay/build"
+    echo "$uxplay_stamp" > "$work/uxplay/.tsunagupad-stamp"
 fi
 
 say "Mengambil Virtual Display Driver"
@@ -75,6 +83,7 @@ plugins=(
     webrtc dtls srtp sctp d3d11 d3d12 nvcodec qsv amfcodec mediafoundation videoparsersbad
     wasapi wasapi2 codectimestamper hls
     x264 libav nice
+    level imagefreeze   # UxPlay: "level" ada di pipa suaranya, tanpanya UxPlay langsung berhenti
 )
 for p in "${plugins[@]}"; do
     dll=$prefix/lib/gstreamer-1.0/libgst$p.dll
@@ -109,6 +118,7 @@ say "Lisensi dan sumber"
 cp LICENSE "$stage/licenses/Tsunagu-Pad-LICENSE.txt"
 cp THIRD_PARTY_NOTICES.md "$stage/licenses/THIRD_PARTY_NOTICES.md"
 cp "$work/uxplay/LICENSE" "$stage/licenses/UxPlay-LICENSE.txt"
+cp windows/uxplay-mdns-interface.patch "$stage/licenses/UxPlay-mdns-interface.patch"
 [[ -f $work/uxplay/lib/llhttp/LICENSE-MIT ]] && cp "$work/uxplay/lib/llhttp/LICENSE-MIT" "$stage/licenses/UxPlay-llhttp-LICENSE.txt"
 [[ -f $work/vdd-LICENSE ]] && cp "$work/vdd-LICENSE" "$stage/licenses/VirtualDisplayDriver-LICENSE.txt"
 {
@@ -116,6 +126,8 @@ cp "$work/uxplay/LICENSE" "$stage/licenses/UxPlay-LICENSE.txt"
     echo
     echo "UxPlay (GPL-3.0-or-later): $UXPLAY_REPO, commit $UXPLAY_COMMIT"
     echo "  https://github.com/FDH2/UxPlay/archive/$UXPLAY_COMMIT.tar.gz"
+    echo "  Dimodifikasi oleh Tsunagu-Pad dengan UxPlay-mdns-interface.patch (di folder ini):"
+    echo "  variabel UXPLAY_MDNS_IPV4 memilih adaptor jaringan untuk pengumuman mDNS."
     echo "Virtual Display Driver (MIT): $VDD_URL (sha256 $VDD_SHA256)"
     echo "  sumber: https://github.com/VirtualDrivers/Virtual-Display-Driver"
     echo

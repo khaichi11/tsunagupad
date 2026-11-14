@@ -118,6 +118,10 @@ from them is copied into the files of this repository. Each can be replaced by
 another build of the same version. The GPL applies to x264, FFmpeg as built,
 and UxPlay as distributed in the installer; the source locations for the exact
 versions are listed in `licenses/SOURCES.txt`, as those licenses require.
+UxPlay in the installer carries one small change, in
+`windows/uxplay-mdns-interface.patch` (also shipped in `licenses/`): the
+variable `UXPLAY_MDNS_IPV4` selects the network adapter for its mDNS
+announcements, so the iPad can find the receiver over the Windows hotspot.
 
 The Virtual Display Driver is signed by SignPath Foundation on behalf of the
 Virtual Display Driver project. The installer verifies the SHA-256 checksum of

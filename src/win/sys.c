@@ -257,7 +257,7 @@ static gint compare_address(gconstpointer a, gconstpointer b)
  * VirtualBox, VMware, Docker) ditaruh paling akhir, bukan dibuang: di
  * komputer yang tersambung lewat switch eksternal Hyper-V, "vEthernet"
  * justru satu-satunya jalan ke jaringan. */
-GPtrArray *win_local_addresses(void)
+static GArray *collect_addresses(void)
 {
     static const wchar_t *const virtual_nets[] = {
         L"vEthernet", L"Hyper-V Virtual", L"VirtualBox", L"VMware", L"WSL", L"Docker",
@@ -275,6 +275,10 @@ GPtrArray *win_local_addresses(void)
     if (ret == NO_ERROR) {
         for (IP_ADAPTER_ADDRESSES *a = list; a; a = a->Next) {
             if (a->OperStatus != IfOperStatusUp || a->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+                continue;
+            /* Jaringan host-only (VirtualBox, VMware) hanya menuju mesin
+             * virtual di laptop ini; iPad tidak pernah bisa sampai ke sana. */
+            if (contains_ci(a->Description, L"Host-Only") || contains_ci(a->FriendlyName, L"Host-Only"))
                 continue;
             gboolean virtual_net = FALSE;
             for (guint v = 0; v < G_N_ELEMENTS(virtual_nets); v++)
@@ -305,11 +309,31 @@ GPtrArray *win_local_addresses(void)
         }
     }
     g_free(list);
-
     g_array_sort(found, compare_address);
+    return found;
+}
+
+GPtrArray *win_local_addresses(void)
+{
+    GArray *found = collect_addresses();
     GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
     for (guint i = 0; i < found->len; i++)
         g_ptr_array_add(out, g_array_index(found, Address, i).addr);
+    g_array_free(found, TRUE);
+    return out;
+}
+
+/* Alamat laptop di jaringan Mobile Hotspot, atau NULL bila hotspot mati. */
+char *win_hotspot_address(void)
+{
+    GArray *found = collect_addresses();
+    char *out = NULL;
+    for (guint i = 0; i < found->len; i++) {
+        Address *a = &g_array_index(found, Address, i);
+        if (a->rank == 0 && !out)
+            out = g_strdup(a->addr);
+        g_free(a->addr);
+    }
     g_array_free(found, TRUE);
     return out;
 }
