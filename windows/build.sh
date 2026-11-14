@@ -10,8 +10,15 @@
 #
 # Hasilnya dist/windows/Tsunagu-Pad-<versi>-setup.exe. Pemasang itu membawa
 # semua yang dibutuhkan: program, plugin GStreamer, UxPlay untuk AirPlay, dan
-# Virtual Display Driver untuk layar kedua. Tidak ada yang diunduh saat
-# pemasangan.
+# driver layar kedua milik Tsunagu-Pad. Tidak ada yang diunduh saat pemasangan.
+#
+# Driver layar kedua (windows/driver) dibangun dulu dengan Visual Studio dan WDK,
+# di PowerShell biasa, bukan di MSYS2 (GitHub Actions melakukannya sendiri):
+#
+#   msbuild windows\driver\TsunaguPadDisplay.vcxproj /p:Configuration=Release /p:Platform=x64
+#   lalu salin TsunaguPadDisplay.inf, .dll, dan .cat ke dist\windows\driver\
+#
+# Tanpa folder itu pemasang tetap dibuat, hanya tanpa komponen layar kedua.
 #
 # SPDX-License-Identifier: MIT
 set -euo pipefail
@@ -29,9 +36,6 @@ mkdir -p "$work"
 # Versi yang dikunci, supaya pemasang yang sama selalu berisi hal yang sama.
 UXPLAY_REPO=https://github.com/FDH2/UxPlay.git
 UXPLAY_COMMIT=05b0275cb1b726592700e47a6e0307544b3d3a52   # 1.74, dengan mDNS bawaan (tanpa Bonjour)
-VDD_URL=https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.7.23/VirtualDisplayDriver-x86.Driver.Only.zip
-VDD_SHA256=e24210692b442b39af763536330ce78b423f19342b7a7792c26de3944e418b3a
-VDD_LICENSE_URL=https://raw.githubusercontent.com/VirtualDrivers/Virtual-Display-Driver/master/LICENSE
 
 say "Membangun Tsunagu-Pad $version"
 make clean >/dev/null
@@ -55,21 +59,21 @@ if [[ ! -x $work/uxplay/build/uxplay.exe || "$(cat "$work/uxplay/.tsunagupad-sta
     echo "$uxplay_stamp" > "$work/uxplay/.tsunagupad-stamp"
 fi
 
-say "Mengambil Virtual Display Driver"
-if [[ ! -f $work/vdd.zip ]] || ! echo "$VDD_SHA256  $work/vdd.zip" | sha256sum -c --quiet; then
-    curl -fsSL -o "$work/vdd.zip" "$VDD_URL"
-fi
-echo "$VDD_SHA256  $work/vdd.zip" | sha256sum -c --quiet
-curl -fsSL -o "$work/vdd-LICENSE" "$VDD_LICENSE_URL" || cp LICENSE "$work/vdd-LICENSE.missing"
-
 say "Menyusun isi pemasang"
 rm -rf "$stage"
-mkdir -p "$stage"/{bin,lib/gstreamer-1.0,lib/gio/modules,libexec/gstreamer-1.0,share/tsunagupad/web,drivers/vdd,licenses}
+mkdir -p "$stage"/{bin,lib/gstreamer-1.0,lib/gio/modules,libexec/gstreamer-1.0,share/tsunagupad/web,drivers/display,licenses}
 cp build/tsunagupad.exe build/tsunagupad-tray.exe "$work/uxplay/build/uxplay.exe" "$stage/bin/"
 cp web/* "$stage/share/tsunagupad/web/"
-cp windows/hotspot.ps1 "$stage/share/tsunagupad/"
-unzip -q -j -o "$work/vdd.zip" 'VirtualDisplayDriver/MttVDD.inf' 'VirtualDisplayDriver/MttVDD.dll' \
-    'VirtualDisplayDriver/mttvdd.cat' -d "$stage/drivers/vdd"
+cp windows/hotspot.ps1 windows/display-install.ps1 "$stage/share/tsunagupad/"
+# Driver layar kedua: katalognya belum bertanda tangan; tanda tangannya dibuat
+# di komputer pengguna saat pemasangan (windows/display-install.ps1).
+if [[ -f $work/driver/TsunaguPadDisplay.inf && -f $work/driver/TsunaguPadDisplay.dll && -f $work/driver/TsunaguPadDisplay.cat ]]; then
+    cp "$work/driver/TsunaguPadDisplay.inf" "$work/driver/TsunaguPadDisplay.dll" "$work/driver/TsunaguPadDisplay.cat" \
+        "$stage/drivers/display/"
+else
+    echo "!! driver layar kedua belum dibangun (dist/windows/driver); pemasang dibuat tanpa layar kedua"
+    rmdir "$stage/drivers/display" "$stage/drivers"
+fi
 cp "$prefix/libexec/gstreamer-1.0/gst-plugin-scanner.exe" "$stage/libexec/gstreamer-1.0/"
 
 # Hanya plugin yang dipakai: tangkap layar dan encoder (D3D11, NVENC, Quick
@@ -119,8 +123,8 @@ cp LICENSE "$stage/licenses/Tsunagu-Pad-LICENSE.txt"
 cp THIRD_PARTY_NOTICES.md "$stage/licenses/THIRD_PARTY_NOTICES.md"
 cp "$work/uxplay/LICENSE" "$stage/licenses/UxPlay-LICENSE.txt"
 cp windows/uxplay-mdns-interface.patch "$stage/licenses/UxPlay-mdns-interface.patch"
+cp windows/driver/LICENSE-MS-PL.txt "$stage/licenses/TsunaguPadDisplay-driver-MS-PL.txt"
 [[ -f $work/uxplay/lib/llhttp/LICENSE-MIT ]] && cp "$work/uxplay/lib/llhttp/LICENSE-MIT" "$stage/licenses/UxPlay-llhttp-LICENSE.txt"
-[[ -f $work/vdd-LICENSE ]] && cp "$work/vdd-LICENSE" "$stage/licenses/VirtualDisplayDriver-LICENSE.txt"
 {
     echo "Sumber komponen pihak ketiga dalam pemasang Tsunagu-Pad $version untuk Windows"
     echo
@@ -128,8 +132,9 @@ cp windows/uxplay-mdns-interface.patch "$stage/licenses/UxPlay-mdns-interface.pa
     echo "  https://github.com/FDH2/UxPlay/archive/$UXPLAY_COMMIT.tar.gz"
     echo "  Dimodifikasi oleh Tsunagu-Pad dengan UxPlay-mdns-interface.patch (di folder ini):"
     echo "  variabel UXPLAY_MDNS_IPV4 memilih adaptor jaringan untuk pengumuman mDNS."
-    echo "Virtual Display Driver (MIT): $VDD_URL (sha256 $VDD_SHA256)"
-    echo "  sumber: https://github.com/VirtualDrivers/Virtual-Display-Driver"
+    echo "Driver layar kedua Tsunagu-Pad Display (MS-PL): kode sumbernya ada di repositori Tsunagu-Pad,"
+    echo "  folder windows/driver, berdasarkan contoh IddSampleDriver dari"
+    echo "  https://github.com/microsoft/Windows-driver-samples (video/IndirectDisplay)."
     echo
     echo "Pustaka berikut dibangun oleh proyek MSYS2. Kode sumber persis untuk setiap versi"
     echo "tersedia di https://repo.msys2.org/mingw/sources/ dan resep build-nya di"

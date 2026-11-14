@@ -64,15 +64,61 @@ jobs:
             gcc:p pkgconf:p cmake:p ninja:p python:p ntldd:p nsis:p
             gstreamer:p gst-plugins-base:p gst-plugins-good:p gst-plugins-bad:p gst-plugins-ugly:p
             gst-libav:p libnice:p libsoup3:p json-glib:p qrencode:p libplist:p openssl:p glib-networking:p
+      - name: Driver layar kedua (Visual Studio + WDK)
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          $out = "$PWD\dist\windows\driver-build\"
+          & $msbuild windows\driver\TsunaguPadDisplay.vcxproj /p:Configuration=Release /p:Platform=x64 /p:OutDir=$out /m /nologo /v:minimal
+          if ($LASTEXITCODE -ne 0) { throw "driver gagal dibangun" }
+          Get-ChildItem -Recurse $out | Select-Object FullName, Length | Format-Table -AutoSize
+          # Paket: INF yang sudah dicap versinya, DLL, dan katalog tanpa tanda tangan.
+          $pkg = "$PWD\dist\windows\driver"
+          New-Item -ItemType Directory -Force $pkg | Out-Null
+          $inf = Get-ChildItem -Recurse $out -Filter TsunaguPadDisplay.inf | Sort-Object { $_.FullName.Length } -Descending | Select-Object -First 1
+          Copy-Item $inf.FullName "$pkg\TsunaguPadDisplay.inf"
+          Copy-Item "$out\TsunaguPadDisplay.dll" "$pkg\TsunaguPadDisplay.dll"
+          $cat = Get-ChildItem -Recurse $out -Filter *.cat | Select-Object -First 1
+          if ($cat) {
+            Copy-Item $cat.FullName "$pkg\TsunaguPadDisplay.cat"
+          } else {
+            $inf2cat = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x86\Inf2Cat.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+            & $inf2cat.FullName /driver:$pkg /os:10_X64 /uselocaltime
+            if ($LASTEXITCODE -ne 0) { throw "katalog driver gagal dibuat" }
+          }
+          Get-Content "$pkg\TsunaguPadDisplay.inf" | Select-String 'DriverVer|UmdfLibraryVersion|NTamd64'
+          Get-ChildItem $pkg | Format-Table Name, Length
+          # Mode uji tanda tangan harus mati, supaya pemasangan di bawah ini
+          # membuktikan driver dipercaya tanpa mode itu, sama seperti di laptop pengguna.
+          bcdedit /enum '{current}' | Select-String -Pattern 'testsigning|nointegritychecks'
       - name: Build dan pemasang
         run: windows/build.sh
       - name: Pasang tanpa tampilan
         shell: pwsh
         run: |
           $setup = Get-ChildItem dist/windows/Tsunagu-Pad-*-setup.exe | Select-Object -First 1
-          Start-Process -Wait -FilePath $setup.FullName -ArgumentList '/S', '/NOVDD'
+          Start-Process -Wait -FilePath $setup.FullName -ArgumentList '/S'
           $exe = "$env:ProgramFiles\Tsunagu-Pad\bin\tsunagupad.exe"
           if (-not (Test-Path $exe)) { throw "tsunagupad.exe tidak terpasang" }
+          # Driver layar kedua milik Tsunagu-Pad: terpasang, monitornya ada, dan
+          # kunci rahasia sertifikat sekali pakainya sudah tidak ada. (Runner
+          # GitHub menyalakan mode uji tanda tangan; tanpa mode itu dibuktikan di
+          # komputer sungguhan.)
+          '--- catatan display-install ---'
+          Get-Content "$env:ProgramData\TsunaguPad\display-install.log" -ErrorAction SilentlyContinue
+          '--- setupapi (tsunagupaddisplay) ---'
+          Select-String -Path "$env:windir\INF\setupapi.dev.log" -Pattern 'tsunagupaddisplay|TsunaguPadDisplay' -ErrorAction SilentlyContinue |
+            Select-Object -Last 40 | ForEach-Object { $_.Line }
+          Get-PnpDevice -Class Display | Format-Table Status, FriendlyName, InstanceId -AutoSize
+          Get-PnpDevice -Class Monitor | Format-Table Status, FriendlyName, InstanceId -AutoSize
+          pnputil /enum-drivers | Select-String -Context 0,6 -Pattern 'tsunagupaddisplay'
+          $dev = Get-PnpDevice -FriendlyName 'Tsunagu-Pad Display' -ErrorAction SilentlyContinue
+          if (-not $dev -or $dev.Status -ne 'OK') { throw "driver layar kedua tidak terpasang atau tidak jalan" }
+          $certs = Get-ChildItem Cert:\LocalMachine\Root | Where-Object Subject -like '*Tsunagu-Pad Display Driver*'
+          if (-not $certs) { throw "sertifikat driver tidak tercatat sebagai tepercaya" }
+          if ($certs | Where-Object HasPrivateKey) { throw "kunci rahasia sertifikat driver masih ada" }
+          if (Get-ChildItem Cert:\LocalMachine\My | Where-Object Subject -like '*Tsunagu-Pad Display Driver*') { throw "sertifikat dengan kunci masih tersimpan" }
           & $exe --version
           # Hanya folder kecil berisi peluncur yang masuk PATH, bukan bin beserta DLL-nya.
           $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
@@ -81,7 +127,9 @@ jobs:
           & "$env:ProgramFiles\Tsunagu-Pad\cmd\tsunagupad.cmd" capabilities
           if ($LASTEXITCODE -ne 0) { throw "peluncur tsunagupad.cmd gagal" }
           if (-not (Test-Path "$env:ProgramFiles\Tsunagu-Pad\lib\gstreamer-1.0\libgstlevel.dll")) { throw "plugin level (dibutuhkan UxPlay) tidak ikut" }
-          & $exe capabilities
+          $caps = & $exe capabilities | ConvertFrom-Json
+          $caps
+          if ($caps.second -ne 'yes') { throw "layar kedua tidak tersedia setelah driver dipasang" }
           & $exe probe
           & $exe hotspot status
           "hotspot status: kode $LASTEXITCODE"
@@ -108,6 +156,24 @@ jobs:
           $rc = $LASTEXITCODE
           Stop-Process -Id $p.Id -Force
           exit $rc
+      - name: Uji layar kedua (monitor virtual disambungkan lalu dilepas)
+        shell: pwsh
+        run: |
+          $exe = "$env:ProgramFiles\Tsunagu-Pad\bin\tsunagupad.exe"
+          $p = Start-Process -FilePath $exe -ArgumentList 'share', '--second', '1280x800', '--test-source', '--port', '18766' `
+                 -RedirectStandardOutput second.log -RedirectStandardError second.err -PassThru -NoNewWindow
+          $placed = $false
+          for ($i = 0; $i -lt 60 -and -not $placed; $i++) {
+            Start-Sleep -Milliseconds 500
+            $placed = (Test-Path second.log) -and (Select-String -Path second.log -Pattern '"second"' -Quiet)
+          }
+          $monitors = & $exe monitors
+          $monitors
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          & $exe second-off
+          Get-Content second.log, second.err -ErrorAction SilentlyContinue
+          if (-not $placed) { throw "monitor virtual tidak disambungkan" }
+          if (-not ($monitors -match '"virtual":true')) { throw "monitor virtual tidak muncul di daftar monitor" }
       - name: Uji penerima AirPlay (tetap jalan dan bisa ditemukan lewat mDNS)
         shell: pwsh
         run: |
@@ -157,6 +223,9 @@ jobs:
           Remove-Item -Recurse -Force "$env:ProgramFiles\Tsunagu-Pad" -ErrorAction SilentlyContinue
           if (Get-Service TsunaguPad -ErrorAction SilentlyContinue) { throw "layanan masih ada" }
           if ([Environment]::GetEnvironmentVariable('Path', 'Machine') -match 'Tsunagu-Pad') { throw "entri PATH masih ada" }
+          if (Get-PnpDevice -FriendlyName 'Tsunagu-Pad Display' -ErrorAction SilentlyContinue) { throw "driver layar kedua masih ada" }
+          if (pnputil /enum-drivers | Select-String 'tsunagupaddisplay') { throw "paket driver layar kedua masih ada" }
+          if (Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\TrustedPublisher | Where-Object Subject -like '*Tsunagu-Pad Display Driver*') { throw "sertifikat driver masih ada" }
           if (Get-NetFirewallRule -DisplayName 'Tsunagu-Pad*' -ErrorAction SilentlyContinue) { throw "aturan firewall masih ada" }
       - uses: actions/upload-artifact@v7
         with:

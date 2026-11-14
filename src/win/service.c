@@ -435,13 +435,13 @@ static char *handle_command(const char *line)
         SetEvent(wake_event);
         return g_strdup("ok");
     }
-    if (g_str_has_prefix(line, "vdd-mode ")) {
+    if (g_str_has_prefix(line, "display-mode ")) {
         int w = 0, h = 0;
         char tail;
-        if (sscanf(line + 9, "%d %d%c", &w, &h, &tail) != 2 || w < 320 || h < 240 || w > 7680 || h > 4320)
+        if (sscanf(line + 13, "%d %d%c", &w, &h, &tail) != 2 || w < 320 || h < 240 || w > 7680 || h > 4320)
             return g_strdup("error ukuran tidak valid");
         GError *err = NULL;
-        if (!vdd_add_mode(w & ~1, h & ~1, &err)) {
+        if (!display_add_mode(w & ~1, h & ~1, &err)) {
             char *reply = g_strdup_printf("error %s", err ? err->message : "gagal");
             g_clear_error(&err);
             return reply;

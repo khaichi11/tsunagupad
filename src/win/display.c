@@ -1,8 +1,8 @@
 /* Tsunagu-Pad untuk Windows: monitor dan layar kedua.
  *
- * Layar kedua memakai Virtual Display Driver (IddCx, lisensi MIT) yang
- * dipasang pemasang Tsunagu-Pad. Driver itu selalu menyediakan satu monitor
- * virtual; di sini monitor itu disambungkan ke desktop saat iPad dipakai
+ * Layar kedua memakai Tsunagu-Pad Display, driver Indirect Display milik
+ * Tsunagu-Pad sendiri (windows/driver). Driver itu selalu menyediakan satu
+ * monitor virtual; di sini monitor itu disambungkan ke desktop saat iPad dipakai
  * sebagai layar kedua, diberi ukuran, letak, dan skala, lalu dilepas lagi
  * saat selesai. Semuanya lewat API konfigurasi tampilan Windows (CCD), yang
  * boleh dipakai pengguna biasa tanpa hak administrator.
@@ -22,9 +22,9 @@
 
 #include "win.h"
 
-/* EDID driver layar virtual: pabrikan "MTT", produk 0x1337, nama "VDD by MTT". */
-#define VDD_EDID_ID   "MTT1337"
-#define VDD_EDID_NAME "VDD by MTT"
+/* EDID monitor Tsunagu-Pad Display: pabrikan "TSU", produk 0x0001, nama "Tsunagu-Pad". */
+#define VDD_EDID_ID   "TSU0001"
+#define VDD_EDID_NAME "Tsunagu-Pad"
 
 struct _Vdisp {
     char device[64];
@@ -466,7 +466,7 @@ static gboolean vdd_attach(GError **error)
     gboolean ok = vdd_path(&all, &active, &p, &on);
     if (!ok) {
         g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
-                    "Driver layar virtual belum terpasang. Pasang ulang Tsunagu-Pad dan centang "
+                    "Driver layar kedua belum terpasang. Pasang ulang Tsunagu-Pad dan centang "
                     "komponen \"Layar kedua\".");
     } else if (!on) {
         DISPLAYCONFIG_PATH_INFO *paths = g_new0(DISPLAYCONFIG_PATH_INFO, active.npaths + 1);
@@ -740,7 +740,7 @@ static gboolean request_mode(const wchar_t *dev, int w, int h)
 {
     if (!win_service_installed())
         return FALSE;
-    char *cmd = g_strdup_printf("vdd-mode %d %d", w, h);
+    char *cmd = g_strdup_printf("display-mode %d %d", w, h);
     gboolean ok = win_service_request(cmd, NULL, NULL);
     g_free(cmd);
     if (!ok)

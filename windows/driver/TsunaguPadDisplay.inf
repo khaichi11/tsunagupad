@@ -1,0 +1,77 @@
+;
+; TsunaguPadDisplay.inf - monitor virtual untuk layar kedua Tsunagu-Pad
+;
+; Berdasarkan IddSampleDriver.inf dari Microsoft (Windows-driver-samples,
+; video/IndirectDisplay), lisensi Microsoft Public License (MS-PL).
+; Katalognya ditandatangani di komputer tempat Tsunagu-Pad dipasang
+; (lihat windows/display-install.ps1).
+;
+
+[Version]
+PnpLockDown=1
+Signature="$Windows NT$"
+ClassGUID={4D36E968-E325-11CE-BFC1-08002BE10318}
+Class=Display
+ClassVer=2.0
+Provider=%ManufacturerName%
+CatalogFile=TsunaguPadDisplay.cat
+DriverVer=
+
+[Manufacturer]
+%ManufacturerName%=Standard,NT$ARCH$.10.0...18362
+
+[Standard.NT$ARCH$.10.0...18362]
+%DeviceName%=TsunaguPadDisplay_Install, Root\TsunaguPadDisplay
+
+[SourceDisksFiles]
+TsunaguPadDisplay.dll=1
+
+[SourceDisksNames]
+1 = %DiskName%
+
+; =================== UMDF Device ==================================
+
+[TsunaguPadDisplay_Install.NT]
+Include=WUDFRD.inf
+Needs=WUDFRD.NT
+CopyFiles=UMDriverCopy
+
+[TsunaguPadDisplay_Install.NT.hw]
+Include=WUDFRD.inf
+Needs=WUDFRD.NT.HW
+AddReg=TsunaguPadDisplay_HardwareDeviceSettings
+
+[TsunaguPadDisplay_HardwareDeviceSettings]
+HKR,, "UpperFilters", %REG_MULTI_SZ%, "IndirectKmd"
+; Proses UMDF sendiri, terpisah dari driver lain.
+HKR, "WUDF", "DeviceGroupId", %REG_SZ%, "TsunaguPadDisplayGroup"
+
+[TsunaguPadDisplay_Install.NT.Services]
+Include=WUDFRD.inf
+Needs=WUDFRD.NT.Services
+
+[TsunaguPadDisplay_Install.NT.Wdf]
+UmdfService=TsunaguPadDisplay,TsunaguPadDisplay_Service
+UmdfServiceOrder=TsunaguPadDisplay
+UmdfKernelModeClientPolicy=AllowKernelModeClients
+
+[TsunaguPadDisplay_Service]
+UmdfLibraryVersion=$UMDFVERSION$
+ServiceBinary=%12%\UMDF\TsunaguPadDisplay.dll
+UmdfExtensions=IddCx0102
+
+[DestinationDirs]
+UMDriverCopy=12,UMDF
+
+[UMDriverCopy]
+TsunaguPadDisplay.dll
+
+; =================== Generic ==================================
+
+[Strings]
+ManufacturerName="Tsunagu-Pad"
+DiskName="Tsunagu-Pad Display"
+DeviceName="Tsunagu-Pad Display"
+
+REG_MULTI_SZ = 0x00010000
+REG_SZ       = 0x00000000

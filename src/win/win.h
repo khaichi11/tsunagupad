@@ -105,5 +105,4 @@ gboolean win_service_request(const char *command, char **reply, GError **error);
 /* ---------- setup.c ---------- */
 
 int win_cmd_setup(int argc, char **argv);
-gboolean vdd_add_mode(int width, int height, GError **error);
-gboolean vdd_restart_device(void);
+gboolean display_add_mode(int width, int height, GError **error);
