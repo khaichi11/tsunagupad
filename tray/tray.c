@@ -25,6 +25,7 @@
 #define WM_CHILD_LINE  (WM_APP + 2)
 #define WM_CHILD_EXIT  (WM_APP + 3)
 #define WM_TASK_DONE   (WM_APP + 4)
+#define WM_PANEL_BACK  (WM_APP + 5)
 
 #define SHARE_PORT 8765
 #define RECEIVER_NAME "Tsunagu-Pad Windows"
@@ -35,7 +36,7 @@ enum {
     ID_COPY, ID_RESET_TOKEN, ID_HOTSPOT, ID_HOTSPOT_CONFIG, ID_BOOT, ID_AUTOSTART, ID_EXIT,
     ID_SETTINGS, ID_MONITOR_PRIMARY = 300, ID_MONITOR_BASE = 301,
     ID_SIZE_BASE = 400, ID_SCALE_BASE = 420, ID_QUALITY_BASE = 440,
-    ID_DLG_SAVE = 500, ID_DLG_CANCEL,
+    ID_HOTSPOT_SAVE = 500, ID_HOTSPOT_CANCEL,
 };
 
 enum { TIMER_POLL = 1, TIMER_RECEIVER_RESTART, TIMER_COPY, TIMER_DISPLAY, TIMER_PROMOTE };
@@ -76,7 +77,7 @@ typedef struct {
 } Monitor;
 
 static Config config;
-static HWND main_hwnd, panel_hwnd, dialog_hwnd;
+static HWND main_hwnd, panel_hwnd;
 static HINSTANCE instance;
 static NOTIFYICONDATAW nid;
 static UINT taskbar_created;
@@ -96,6 +97,8 @@ static int quick_exits;
 static gboolean starting;
 
 static char *status_text;
+static char *receiver_error;    /* pesan galat terakhir dari UxPlay/GStreamer */
+static char *receiver_network;  /* hotspot | lan: tempat penerima diumumkan */
 static char **urls;
 static char *qr_rows;
 static char *last_client;
@@ -108,6 +111,7 @@ static char *caps_hotspot;  /* yes | no | unknown */
 /* hotspot */
 static gboolean hotspot_active, hotspot_busy;
 static char *hotspot_ssid, *hotspot_password, *hotspot_qr, *hotspot_qr_text;
+static char *hotspot_shared;    /* nama jaringan internet laptop, mis. eduroam */
 
 /* layanan */
 static gboolean service_enabled, service_share;
@@ -330,7 +334,7 @@ static JsonObject *last_json(const char *out, JsonParser **keep)
 /* ---------- pekerjaan latar ---------- */
 
 typedef enum { TASK_CAPS, TASK_HOTSPOT_STATUS, TASK_HOTSPOT_SET, TASK_HOTSPOT_CONFIG, TASK_WIFI_QR,
-               TASK_SERVICE_STATUS, TASK_SERVICE_TOGGLE } TaskKind;
+               TASK_SERVICE_STATUS, TASK_SERVICE_TOGGLE, TASK_MONITORS } TaskKind;
 
 typedef struct {
     TaskKind kind;
@@ -370,6 +374,11 @@ static DWORD WINAPI task_thread(LPVOID p)
     }
     case TASK_SERVICE_STATUS: {
         const char *a[] = { "service", "status", NULL };
+        t->output = run_tool(a, NULL, &t->code);
+        break;
+    }
+    case TASK_MONITORS: {
+        const char *a[] = { "monitors", NULL };
         t->output = run_tool(a, NULL, &t->code);
         break;
     }
@@ -490,18 +499,25 @@ static gboolean running(void)
 
 static void update_tray(void)
 {
-    nid.uFlags = NIF_ICON | NIF_TIP;
-    nid.hIcon = running() ? icon_active : icon_idle;
+    HICON icon = running() ? icon_active : icon_idle;
     char *tip = g_strdup_printf("Tsunagu-Pad — %s", status_text ? status_text : "");
     wchar_t *w = W(tip);
-    wcsncpy(nid.szTip, w, G_N_ELEMENTS(nid.szTip) - 1);
-    nid.szTip[G_N_ELEMENTS(nid.szTip) - 1] = 0;
+    wchar_t next[G_N_ELEMENTS(nid.szTip)];
+    wcsncpy(next, w, G_N_ELEMENTS(next) - 1);
+    next[G_N_ELEMENTS(next) - 1] = 0;
     g_free(w);
     g_free(tip);
+    /* Statistik datang tiap detik; Explorer hanya diberi tahu bila berubah. */
+    if (nid.hIcon == icon && wcscmp(nid.szTip, next) == 0)
+        return;
+    nid.uFlags = NIF_ICON | NIF_TIP;
+    nid.hIcon = icon;
+    wcscpy(nid.szTip, next);
     Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
 static void sync_ui(void);
+static void position_panel(gboolean raise);
 
 /* ---------- proses tsunagupad ---------- */
 
@@ -683,16 +699,19 @@ static void refresh_service_share(void)
 
 /* ---------- monitor ---------- */
 
-static void load_monitors(void)
+/* Daftar monitor disimpan dan diperbarui di latar belakang (saat program
+ * mulai dan saat susunan layar berubah). Membuka menu tidak lagi menunggu
+ * tsunagupad.exe selesai, yang dulu membuat panel membeku sesaat. */
+static gboolean monitors_loaded;
+
+static void parse_monitors(const char *out)
 {
     if (!monitors)
         monitors = g_array_new(FALSE, TRUE, sizeof(Monitor));
-    g_array_set_size(monitors, 0);
-    const char *a[] = { "monitors", NULL };
-    char *out = run_tool(a, NULL, NULL);
     JsonParser *p = NULL;
     JsonObject *o = last_json(out, &p);
     JsonArray *list = o && json_object_has_member(o, "monitors") ? json_object_get_array_member(o, "monitors") : NULL;
+    GArray *fresh = g_array_new(FALSE, TRUE, sizeof(Monitor));
     for (guint i = 0; list && i < json_array_get_length(list); i++) {
         JsonObject *m = json_array_get_object_element(list, i);
         Monitor mon;
@@ -704,10 +723,25 @@ static void load_monitors(void)
         mon.primary = json_object_get_boolean_member_with_default(m, "primary", FALSE);
         mon.is_virtual = json_object_get_boolean_member_with_default(m, "virtual", FALSE);
         if (!mon.is_virtual)
-            g_array_append_val(monitors, mon);
+            g_array_append_val(fresh, mon);
     }
+    if (list) {
+        g_array_set_size(monitors, 0);
+        g_array_append_vals(monitors, fresh->data, fresh->len);
+        monitors_loaded = TRUE;
+    }
+    g_array_free(fresh, TRUE);
     if (p)
         g_object_unref(p);
+}
+
+static void load_monitors(void)
+{
+    if (monitors_loaded)
+        return;
+    const char *a[] = { "monitors", NULL };
+    char *out = run_tool(a, NULL, NULL);
+    parse_monitors(out);
     g_free(out);
 }
 
@@ -735,6 +769,8 @@ static gboolean share_mode(void)
 
 static void start(void)
 {
+    if (quick_exits == 0)
+        set_str(&receiver_error, NULL);
     if (starting || child)
         return;
     starting = TRUE;
@@ -824,7 +860,9 @@ static void on_child_line(const char *line)
         const char *state = json_object_get_string_member_with_default(o, "state", "");
         const char *message = json_object_get_string_member_with_default(o, "message", "");
         const char *addr = json_object_get_string_member_with_default(o, "addr", "");
-        if (g_str_equal(ev, "ready")) {
+        if (g_str_equal(ev, "receiver")) {
+            set_str(&receiver_network, json_object_get_string_member_with_default(o, "network", "lan"));
+        } else if (g_str_equal(ev, "ready")) {
             g_strfreev(urls);
             urls = g_strsplit(json_object_get_string_member_with_default(o, "urls", ""), " ", -1);
             set_str(&qr_rows, json_object_get_string_member_with_default(o, "qr", ""));
@@ -868,6 +906,12 @@ static void on_child_line(const char *line)
     } else if (!share) {
         /* Log UxPlay */
         char *text = g_ascii_strdown(line, -1);
+        if (strstr(text, "error") || strstr(text, "failed") || strstr(text, "no element")) {
+            char *clean = g_strstrip(g_strdup(line));
+            if (*clean && !g_str_has_prefix(clean, "***"))
+                set_str(&receiver_error, clean);
+            g_free(clean);
+        }
         if (strstr(text, "connection request from"))
             set_str(&status_text, "iPad menyambung…");
         else if (strstr(text, "begin streaming"))
@@ -894,7 +938,12 @@ static void on_child_exit(DWORD code)
         quick_exits = quick ? quick_exits + 1 : 0;
         if (quick_exits >= 3) {
             quick_exits = 0;
-            notify("Penerima AirPlay berhenti berulang kali. Pastikan tidak ada UxPlay lain yang berjalan, lalu nyalakan lagi.");
+            char *msg = receiver_error
+                ? g_strdup_printf("Penerima AirPlay tidak bisa berjalan: %s", receiver_error)
+                : g_strdup("Penerima AirPlay berhenti berulang kali. Pastikan tidak ada UxPlay lain yang berjalan, "
+                           "lalu nyalakan lagi.");
+            notify(msg);
+            g_free(msg);
             set_str(&status_text, NULL);
         } else {
             set_str(&status_text, "Penerima berhenti, menyalakan ulang…");
@@ -936,9 +985,15 @@ static void hotspot_apply(JsonObject *o)
         g_free(msg);
         return;
     }
+    gboolean was_active = hotspot_active;
     hotspot_active = g_strcmp0(json_object_get_string_member_with_default(o, "state", ""), "active") == 0;
+    /* Penerima AirPlay diumumkan di hotspot bila menyala, di jaringan biasa
+     * bila tidak; saat hotspot berubah, penerimanya dinyalakan ulang. */
+    if (was_active != hotspot_active && g_strcmp0(child_kind, "receive") == 0)
+        restart();
     set_str(&hotspot_ssid, json_object_get_string_member_with_default(o, "ssid", ""));
     set_str(&hotspot_password, json_object_get_string_member_with_default(o, "password", ""));
+    set_str(&hotspot_shared, json_object_get_string_member_with_default(o, "shared", ""));
     if (hotspot_active && hotspot_ssid && *hotspot_ssid) {
         char *text = wifi_qr_text(hotspot_ssid, hotspot_password);
         if (g_strcmp0(text, hotspot_qr_text) != 0) {
@@ -954,6 +1009,9 @@ static void on_task_done(Task *t)
     JsonParser *p = NULL;
     JsonObject *o = last_json(t->output, &p);
     switch (t->kind) {
+    case TASK_MONITORS:
+        parse_monitors(t->output);
+        break;
     case TASK_CAPS:
         if (o) {
             caps_known = TRUE;
@@ -1090,253 +1148,47 @@ static void autostart_set(gboolean on)
 
 /* ---------- menu ---------- */
 
-static void add_item(HMENU m, UINT id, const char *label, gboolean checked, gboolean enabled, gboolean radio)
-{
-    wchar_t *w = W(label);
-    MENUITEMINFOW mi = { .cbSize = sizeof mi };
-    mi.fMask = MIIM_ID | MIIM_STRING | MIIM_STATE | MIIM_FTYPE;
-    mi.fType = MFT_STRING | (radio ? MFT_RADIOCHECK : 0);
-    mi.fState = (checked ? MFS_CHECKED : 0) | (enabled ? 0 : MFS_DISABLED);
-    mi.wID = id;
-    mi.dwTypeData = w;
-    InsertMenuItemW(m, GetMenuItemCount(m), TRUE, &mi);
-    g_free(w);
-}
-
-static void add_submenu(HMENU m, HMENU sub, const char *label)
-{
-    wchar_t *w = W(label);
-    AppendMenuW(m, MF_POPUP, (UINT_PTR) sub, w);
-    g_free(w);
-}
-
-/* drop_down: menu turun dari titik (dari panel); selain itu naik dari kursor
- * di taskbar. Perintahnya dijalankan setelah menu tertutup, dan pemiliknya
- * tetap aktif, supaya panel tidak ikut tertutup. */
-static void show_menu_at(HWND owner, POINT pt, gboolean drop_down)
-{
-    load_monitors();
-    HMENU m = CreatePopupMenu();
-    gboolean share = share_mode();
-    gboolean on = running();
-
-    add_item(m, ID_TOGGLE, on ? "Matikan Tsunagu-Pad" : "Nyalakan Tsunagu-Pad", FALSE, !starting, FALSE);
-    add_item(m, ID_SHOW_PANEL, "Tampilkan panel…", FALSE, TRUE, FALSE);
-    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
-    add_item(m, ID_MODE_SHARE, "Windows ke iPad", share, TRUE, TRUE);
-    add_item(m, ID_MODE_RECEIVE, "iPad ke Windows (AirPlay)", !share, TRUE, TRUE);
-    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
-
-    if (share) {
-        gboolean second = config.second && caps_second;
-        if (caps_second)
-            add_item(m, ID_SECOND, "Jadikan iPad layar kedua", second, TRUE, FALSE);
-        if (second) {
-            HMENU size = CreatePopupMenu();
-            for (guint i = 0; i < G_N_ELEMENTS(second_sizes); i++)
-                add_item(size, ID_SIZE_BASE + i, second_sizes[i].label,
-                         g_strcmp0(config.second_size, second_sizes[i].id) == 0, TRUE, TRUE);
-            add_submenu(m, size, "Ukuran layar kedua");
-            HMENU scale = CreatePopupMenu();
-            for (guint i = 0; i < G_N_ELEMENTS(second_scales); i++)
-                add_item(scale, ID_SCALE_BASE + i, second_scales[i].label,
-                         g_strcmp0(config.second_scale, second_scales[i].id) == 0, TRUE, TRUE);
-            add_submenu(m, scale, "Skala layar kedua");
-        } else {
-            HMENU mon = CreatePopupMenu();
-            const Monitor *sel = selected_monitor();
-            for (guint i = 0; monitors && i < monitors->len && i < 32; i++) {
-                const Monitor *x = &g_array_index(monitors, Monitor, i);
-                char *label = g_strdup_printf("%s · %d×%d%s", x->name, x->width, x->height, x->primary ? " (utama)" : "");
-                add_item(mon, ID_MONITOR_BASE + i, label, sel == x, TRUE, TRUE);
-                g_free(label);
-            }
-            char *title = g_strdup_printf("Monitor: %s", sel ? sel->name : "Utama");
-            add_submenu(m, mon, title);
-            g_free(title);
-        }
-        HMENU q = CreatePopupMenu();
-        const char *qid = service_share ? "monitor" : config.quality;
-        for (guint i = 0; i < G_N_ELEMENTS(qualities); i++) {
-            char *label = g_strdup_printf("%s — %s", qualities[i].label, qualities[i].caption);
-            add_item(q, ID_QUALITY_BASE + i, label, g_strcmp0(qid, qualities[i].id) == 0, TRUE, TRUE);
-            g_free(label);
-        }
-        char *qtitle = NULL;
-        for (guint i = 0; i < G_N_ELEMENTS(qualities); i++)
-            if (g_strcmp0(qid, qualities[i].id) == 0)
-                qtitle = g_strdup_printf("Kualitas: %s", qualities[i].label);
-        add_submenu(m, q, qtitle ? qtitle : "Kualitas");
-        g_free(qtitle);
-    } else {
-        add_item(m, ID_FULLSCREEN, "Layar penuh", config.fullscreen, TRUE, FALSE);
-    }
-
-    if (share) {
-        AppendMenuW(m, MF_SEPARATOR, 0, NULL);
-        add_item(m, ID_COPY, "Salin alamat", FALSE, urls && urls[0] && *urls[0], FALSE);
-        add_item(m, ID_RESET_TOKEN, "Buat kode akses baru", FALSE, TRUE, FALSE);
-    }
-
-    if (g_strcmp0(caps_hotspot, "no") != 0 || hotspot_active) {
-        AppendMenuW(m, MF_SEPARATOR, 0, NULL);
-        add_item(m, ID_HOTSPOT, hotspot_busy ? "Hotspot langsung (sedang diproses…)" : "Hotspot langsung",
-                 hotspot_active, !hotspot_busy, FALSE);
-        add_item(m, ID_HOTSPOT_CONFIG, "Atur nama dan kata sandi hotspot…", FALSE, TRUE, FALSE);
-    }
-
-    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
-    if (caps_service)
-        add_item(m, ID_BOOT, "iPad aktif di sesi berikutnya (juga layar login)", service_enabled, TRUE, FALSE);
-    add_item(m, ID_AUTOSTART, "Mulai otomatis saat masuk Windows", autostart_enabled(), TRUE, FALSE);
-    add_item(m, ID_EXIT, "Keluar", FALSE, TRUE, FALSE);
-
-    if (GetForegroundWindow() != owner)
-        SetForegroundWindow(owner);
-    UINT cmd = TrackPopupMenu(m, TPM_RIGHTBUTTON | TPM_RETURNCMD | (drop_down ? TPM_TOPALIGN : TPM_BOTTOMALIGN),
-                              pt.x, pt.y, 0, owner, NULL);
-    PostMessageW(owner, WM_NULL, 0, 0);
-    DestroyMenu(m);
-    if (cmd)
-        on_command(cmd);
-}
-
-static void show_menu(HWND owner, POINT pt)
-{
-    show_menu_at(owner, pt, FALSE);
-}
-
-/* ---------- dialog hotspot ---------- */
-
-static HWND dlg_ssid, dlg_password, dlg_status;
-
-static void dialog_save(void)
-{
-    wchar_t ws[128], wp[128];
-    GetWindowTextW(dlg_ssid, ws, G_N_ELEMENTS(ws));
-    GetWindowTextW(dlg_password, wp, G_N_ELEMENTS(wp));
-    char *ssid = U(ws), *password = U(wp);
-    g_strstrip(ssid);
-    gboolean ssid_ok = strlen(ssid) >= 1 && strlen(ssid) <= 32;
-    for (const char *p = ssid; ssid_ok && *p; p++)
-        ssid_ok = (guchar) *p >= 0x20 && *p != 0x7f;
-    gboolean pass_ok = strlen(password) >= 8 && strlen(password) <= 63;
-    for (const char *p = password; pass_ok && *p; p++)
-        pass_ok = *p >= 0x20 && *p <= 0x7e;
-    if (!ssid_ok)
-        SetWindowTextW(dlg_status, L"Nama Wi-Fi harus 1–32 byte.");
-    else if (!pass_ok)
-        SetWindowTextW(dlg_status, L"Kata sandi harus 8–63 karakter: huruf, angka, simbol, atau spasi "
-                                   L"(tanpa emoji/huruf beraksen).");
-    else {
-        char *input = g_strdup_printf("%s\n", password);
-        task_run(TASK_HOTSPOT_CONFIG, ssid, NULL, input);
-        memset(input, 0, strlen(input));
-        g_free(input);
-        DestroyWindow(dialog_hwnd);
-    }
-    SecureZeroMemory(wp, sizeof wp);
-    memset(password, 0, strlen(password));
-    g_free(password);
-    g_free(ssid);
-}
-
-static LRESULT CALLBACK dialog_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
-{
-    switch (msg) {
-    case WM_COMMAND:
-        if (LOWORD(wp) == ID_DLG_SAVE || LOWORD(wp) == IDOK)
-            dialog_save();
-        else if (LOWORD(wp) == ID_DLG_CANCEL || LOWORD(wp) == IDCANCEL)
-            DestroyWindow(h);
-        return 0;
-    case WM_CLOSE:
-        DestroyWindow(h);
-        return 0;
-    case WM_DESTROY:
-        dialog_hwnd = NULL;
-        return 0;
-    case WM_CTLCOLORSTATIC:
-        SetBkMode((HDC) wp, TRANSPARENT);
-        return (LRESULT) GetSysColorBrush(COLOR_WINDOW);
-    }
-    return DefWindowProcW(h, msg, wp, lp);
-}
-
-static HWND child_ctl(HWND parent, const wchar_t *cls, const wchar_t *text, DWORD style, int x, int y, int w,
-                      int hgt, int id, HFONT font)
-{
-    HWND c = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, x, y, w, hgt, parent,
-                             (HMENU) (INT_PTR) id, instance, NULL);
-    SendMessageW(c, WM_SETFONT, (WPARAM) font, TRUE);
-    return c;
-}
-
-static void show_hotspot_dialog(void)
-{
-    if (dialog_hwnd) {
-        SetForegroundWindow(dialog_hwnd);
-        return;
-    }
-    int w = S(380), h = S(260);
-    RECT wa;
-    SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
-    dialog_hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_TOPMOST, L"TsunaguPadDialog", L"Hotspot Tsunagu-Pad",
-                                  WS_POPUP | WS_CAPTION | WS_SYSMENU, (wa.left + wa.right - w) / 2,
-                                  (wa.top + wa.bottom - h) / 2, w, h, NULL, NULL, instance, NULL);
-    int x = S(16), cw = w - S(48), y = S(14);
-    child_ctl(dialog_hwnd, L"STATIC", L"Nama Wi-Fi", 0, x, y, cw, S(20), 0, font_normal);
-    y += S(22);
-    wchar_t *ssid = W(hotspot_ssid);
-    dlg_ssid = child_ctl(dialog_hwnd, L"EDIT", ssid, WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, x, y, cw, S(26), 0, font_normal);
-    g_free(ssid);
-    y += S(36);
-    child_ctl(dialog_hwnd, L"STATIC", L"Kata sandi (8–63 karakter)", 0, x, y, cw, S(20), 0, font_normal);
-    y += S(22);
-    wchar_t *pass = W(hotspot_password);
-    dlg_password = child_ctl(dialog_hwnd, L"EDIT", pass, WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL | ES_PASSWORD,
-                             x, y, cw, S(26), 0, font_normal);
-    g_free(pass);
-    y += S(32);
-    dlg_status = child_ctl(dialog_hwnd, L"STATIC", L"", 0, x, y, cw, S(36), 0, font_small);
-    y += S(40);
-    child_ctl(dialog_hwnd, L"BUTTON", L"Batal", WS_TABSTOP, w - S(32) - S(180), y, S(86), S(28), ID_DLG_CANCEL, font_normal);
-    child_ctl(dialog_hwnd, L"BUTTON", L"Simpan", WS_TABSTOP | BS_DEFPUSHBUTTON, w - S(32) - S(86), y, S(86), S(28),
-              ID_DLG_SAVE, font_normal);
-    ShowWindow(dialog_hwnd, SW_SHOW);
-    SetForegroundWindow(dialog_hwnd);
-    SetFocus(dlg_ssid);
-}
-
 /* ---------- panel ----------
  * Windows tidak mengizinkan aplikasi lain menambah tombol ke Quick Settings,
- * jadi panel ini meniru tampilannya: kotak-kotak tombol dengan bagian ">"
- * untuk pilihan, sudut membulat, tema gelap/terang mengikuti Windows, dan
- * muncul di pojok kanan bawah tepat di atas ikon jam. */
-
-enum { TILE_MAIN, TILE_RECEIVE, TILE_SECOND, TILE_HOTSPOT, TILE_BOOT, TILE_QUALITY };
-
-typedef struct {
-    int id;
-    RECT box, chevron;
-    gboolean split, on, enabled;
-    const wchar_t *glyph;
-    char *label;
-} Tile;
-
-static Tile tiles[8];
-static int ntiles;
-static RECT copy_rect, settings_rect, qr_rect, hqr_rect;
-static int panel_height;
-static int qr_dip = QR_MAX, hqr_dip = 150;     /* diperkecil bila layar pendek */
-static int hover_tile = -1, hover_part;     /* 1 bagian utama, 2 bagian ">" */
-static gboolean hover_copy, hover_settings, mouse_tracking;
+ * jadi Tsunagu-Pad punya panel sendiri tepat di atas jam, dengan tema yang
+ * sama dengan Windows 11. Semua pilihan ada di satu panel yang bisa digulir:
+ * sakelar utama, arah, QR, layar, kualitas, hotspot, dan pengaturan. Tanpa
+ * menu putih bawaan Windows dan tanpa halaman terpisah. */
 
 #define PANEL_W 360
-#define TILE_W  96
-#define TILE_H  48
-#define TILE_GAP 12
 #define SS 3        /* bentuk digambar 3x lalu diperkecil supaya sudutnya halus */
+#define SWITCH_W 40
+#define SWITCH_H 20
+#define MAX_OPTS 6
+
+enum { ROW_TITLE, ROW_HEADER, ROW_SEGMENT, ROW_RADIO, ROW_TOGGLE, ROW_ACTION, ROW_NOTE, ROW_INFO,
+       ROW_QR, ROW_BUTTONS, ROW_FIELD };
+
+typedef struct {
+    int kind;
+    UINT cmd;                   /* perintah on_command; ROW_FIELD: nomor isian; ROW_QR: 1 = hotspot */
+    char *label, *caption;
+    gboolean checked, enabled;
+    const char *qr;             /* ROW_QR: modul QR (dipinjam) */
+    int nopts, selected;        /* ROW_SEGMENT, ROW_BUTTONS (selected = tombol utama) */
+    char *opts[MAX_OPTS];
+    UINT opt_cmd[MAX_OPTS];
+    RECT opt_box[MAX_OPTS];
+    RECT box, hit;              /* koordinat isi panel, sebelum digulir */
+} Row;
+
+static Row rows[64];
+static int nrows;
+static int hover_row = -1, hover_opt = -1;
+static gboolean mouse_tracking;
+static int panel_height, content_height, scroll_y;
+static int qr_dip = QR_MAX, hqr_dip = 150;      /* diperkecil bila layar pendek */
+static gboolean hotspot_editing;
+static HWND edit_ssid, edit_password;
+static WNDPROC edit_base_proc;
+static char *hotspot_note;                      /* pesan isian hotspot yang salah */
+static HBRUSH field_brush;
+static COLORREF field_brush_color = CLR_INVALID;
 
 static gboolean dark_theme(void)
 {
@@ -1388,11 +1240,35 @@ static HFONT icon_font(int px)
     return CreateFontIndirectW(&lf);
 }
 
+/* Jaringan kampus (eduroam dan sejenisnya) memisahkan perangkat satu sama
+ * lain, jadi iPad tidak bisa menyambung ke laptop walau di Wi-Fi yang sama. */
+static gboolean isolated_network(void)
+{
+    if (hotspot_active || !hotspot_shared || !*hotspot_shared)
+        return FALSE;
+    char *low = g_ascii_strdown(hotspot_shared, -1);
+    gboolean campus = strstr(low, "eduroam") != NULL;
+    g_free(low);
+    return campus;
+}
+
 static char *info_text(void)
 {
-    if (g_strcmp0(child_kind, "receive") == 0)
-        return g_strdup_printf("Di iPad: buka Pusat Kontrol, lalu Pencerminan Layar (Screen Mirroring), "
-                               "lalu pilih “%s”", RECEIVER_NAME);
+    gboolean isolated = isolated_network() && g_strcmp0(caps_hotspot, "no") != 0;
+    const char *tip = "\n\nJaringan ini (%s) memisahkan perangkat, jadi iPad tidak bisa menyambung ke laptop. "
+                      "Nyalakan Hotspot, lalu sambungkan iPad ke Wi-Fi hotspot itu.";
+    if (g_strcmp0(child_kind, "receive") == 0) {
+        GString *s = g_string_new(NULL);
+        if (hotspot_active && hotspot_ssid && *hotspot_ssid)
+            g_string_append_printf(s, "Sambungkan iPad ke Wi-Fi “%s” (QR di bawah), lalu ", hotspot_ssid);
+        else
+            g_string_append(s, "Di iPad: ");
+        g_string_append_printf(s, "buka Pusat Kontrol, lalu Pencerminan Layar (Screen Mirroring), lalu pilih “%s”",
+                               RECEIVER_NAME);
+        if (isolated)
+            g_string_append_printf(s, tip, hotspot_shared);
+        return g_string_free(s, FALSE);
+    }
     if (!urls || !urls[0])
         return NULL;
     GString *s = g_string_new("Pindai dengan kamera iPad atau buka di Safari:\n");
@@ -1400,6 +1276,8 @@ static char *info_text(void)
     for (int i = 1; urls[i] && i < 3; i++)
         if (*urls[i])
             g_string_append_printf(s, "\natau %s", urls[i]);
+    if (isolated)
+        g_string_append_printf(s, tip, hotspot_shared);
     return g_string_free(s, FALSE);
 }
 
@@ -1418,103 +1296,6 @@ static int text_height(HDC dc, HFONT font, const char *text, int width)
     SelectObject(dc, old);
     g_free(w);
     return r.bottom;
-}
-
-static const char *quality_label(void)
-{
-    const char *qid = service_share ? "monitor" : config.quality;
-    for (guint i = 0; i < G_N_ELEMENTS(qualities); i++)
-        if (g_strcmp0(qid, qualities[i].id) == 0)
-            return qualities[i].label;
-    return "Kualitas";
-}
-
-static void add_tile(int id, const wchar_t *glyph, const char *label, gboolean on, gboolean split, gboolean enabled)
-{
-    Tile *t = &tiles[ntiles++];
-    g_free(t->label);
-    memset(t, 0, sizeof *t);
-    t->id = id;
-    t->glyph = glyph;
-    t->label = g_strdup(label);
-    t->on = on;
-    t->split = split;
-    t->enabled = enabled;
-}
-
-static void build_layout(HDC dc)
-{
-    for (int i = 0; i < ntiles; i++)
-        g_clear_pointer(&tiles[i].label, g_free);
-    ntiles = 0;
-    gboolean share = share_mode();
-    char *main_label;
-    if (starting)
-        main_label = g_strdup("Menyiapkan…");
-    else if (running())
-        main_label = g_strdup(status_text ? status_text : service_share ? "Aktif · layanan" : "Aktif");
-    else
-        main_label = g_strdup("Tsunagu-Pad");
-    add_tile(TILE_MAIN, L"", main_label, running(), TRUE, !starting);
-    g_free(main_label);
-    add_tile(TILE_RECEIVE, L"", "iPad ke Windows", !share, FALSE, TRUE);
-    if (caps_second)
-        add_tile(TILE_SECOND, L"", "Layar kedua", share && config.second, TRUE, share);
-    if (g_strcmp0(caps_hotspot, "no") != 0 || hotspot_active)
-        add_tile(TILE_HOTSPOT, L"", hotspot_busy ? "Hotspot…" : "Hotspot", hotspot_active, TRUE, !hotspot_busy);
-    if (caps_service)
-        add_tile(TILE_BOOT, L"", "Sesi berikutnya", service_enabled, FALSE, TRUE);
-    char *q = g_strdup_printf("Kualitas: %s", quality_label());
-    add_tile(TILE_QUALITY, L"", q, FALSE, FALSE, share);
-    g_free(q);
-
-    int left = (S(PANEL_W) - 3 * S(TILE_W) - 2 * S(TILE_GAP)) / 2;
-    int y = S(76);
-    for (int i = 0; i < ntiles; i++) {
-        int col = i % 3, row = i / 3;
-        int x = left + col * (S(TILE_W) + S(TILE_GAP));
-        int ty = y + row * (S(TILE_H) + S(34));
-        SetRect(&tiles[i].box, x, ty, x + S(TILE_W), ty + S(TILE_H));
-        if (tiles[i].split)
-            SetRect(&tiles[i].chevron, x + S(TILE_W) - S(34), ty, x + S(TILE_W), ty + S(TILE_H));
-        else
-            SetRectEmpty(&tiles[i].chevron);
-    }
-    y += ((ntiles + 2) / 3) * (S(TILE_H) + S(34)) + S(4);
-
-    int cw = S(PANEL_W) - 2 * left;
-    SetRectEmpty(&qr_rect);
-    SetRectEmpty(&hqr_rect);
-    SetRectEmpty(&copy_rect);
-    gboolean show_qr = g_strcmp0(child_kind, "share") == 0 && qr_rows && *qr_rows;
-    char *info = info_text();
-    if (show_qr || info || (hotspot_active && hotspot_qr && *hotspot_qr))
-        y += S(14);
-    if (show_qr) {
-        int size = S(qr_dip);
-        SetRect(&qr_rect, (S(PANEL_W) - size) / 2, y, (S(PANEL_W) + size) / 2, y + size);
-        y += size + S(10);
-    }
-    if (info) {
-        y += text_height(dc, font_small, info, cw) + S(10);
-        g_free(info);
-    }
-    if (show_qr) {
-        SetRect(&copy_rect, (S(PANEL_W) - S(150)) / 2, y, (S(PANEL_W) + S(150)) / 2, y + S(32));
-        y += S(44);
-    }
-    if (hotspot_active && hotspot_qr && *hotspot_qr) {
-        int size = S(hqr_dip);
-        SetRect(&hqr_rect, (S(PANEL_W) - size) / 2, y, (S(PANEL_W) + size) / 2, y + size);
-        y += size + S(8);
-        char *t = hotspot_text();
-        y += text_height(dc, font_small, t, cw) + S(10);
-        g_free(t);
-    }
-    y += S(8);
-    /* Kaki panel: petunjuk pintasan di kiri, tombol pengaturan di kanan. */
-    SetRect(&settings_rect, S(PANEL_W) - left - S(36), y + S(8), S(PANEL_W) - left, y + S(44));
-    panel_height = y + S(52);
 }
 
 static void shape(HDC dc, RECT r, int radius, COLORREF fill, COLORREF border)
@@ -1566,6 +1347,420 @@ static void paint_qr(HDC dc, RECT r, const char *rows)
     g_strfreev(lines);
 }
 
+
+/* ---------- isi panel ---------- */
+
+static Row *add_row(int kind, UINT cmd, const char *label, const char *caption, gboolean checked, gboolean enabled)
+{
+    if (nrows >= (int) G_N_ELEMENTS(rows))
+        return NULL;
+    Row *r = &rows[nrows++];
+    memset(r, 0, sizeof *r);
+    r->kind = kind;
+    r->cmd = cmd;
+    r->label = g_strdup(label);
+    r->caption = g_strdup(caption);
+    r->checked = checked;
+    r->enabled = enabled;
+    r->selected = -1;
+    return r;
+}
+
+static void row_opt(Row *r, const char *label, UINT cmd, gboolean selected)
+{
+    if (!r || r->nopts >= MAX_OPTS)
+        return;
+    r->opts[r->nopts] = g_strdup(label);
+    r->opt_cmd[r->nopts] = cmd;
+    if (selected)
+        r->selected = r->nopts;
+    r->nopts++;
+}
+
+static void clear_rows(void)
+{
+    for (int i = 0; i < nrows; i++) {
+        g_free(rows[i].label);
+        g_free(rows[i].caption);
+        for (int k = 0; k < rows[i].nopts; k++)
+            g_free(rows[i].opts[k]);
+    }
+    nrows = 0;
+}
+
+/* "Ringan (1280×800)" -> "Ringan" untuk tombol segmen. */
+static char *short_label(const char *label)
+{
+    const char *p = strstr(label, " (");
+    return p ? g_strndup(label, p - label) : g_strdup(label);
+}
+
+static void build_rows(void)
+{
+    clear_rows();
+    gboolean share = share_mode();
+    gboolean on = running();
+    const char *state = starting ? "Menyiapkan…"
+                      : on ? (status_text ? status_text : service_share ? "Aktif · layanan" : "Aktif")
+                      : "Mati";
+    add_row(ROW_TITLE, ID_TOGGLE, "Tsunagu-Pad", state, on, !starting);
+
+    Row *dir = add_row(ROW_SEGMENT, 0, NULL, NULL, FALSE, !starting);
+    row_opt(dir, "Windows ke iPad", ID_MODE_SHARE, share);
+    row_opt(dir, "iPad ke Windows", ID_MODE_RECEIVE, !share);
+
+    /* Cara menyambung: QR dan alamat, atau petunjuk AirPlay. */
+    gboolean show_qr = g_strcmp0(child_kind, "share") == 0 && qr_rows && *qr_rows;
+    if (show_qr) {
+        Row *q = add_row(ROW_QR, 0, NULL, NULL, FALSE, TRUE);
+        if (q)
+            q->qr = qr_rows;
+    }
+    char *info = info_text();
+    if (info)
+        add_row(ROW_INFO, 0, info, NULL, FALSE, TRUE);
+    else if (!on && !starting)
+        add_row(ROW_INFO, 0, share ? "Nyalakan sakelar di atas, lalu pindai QR-nya dengan kamera iPad."
+                                   : "Nyalakan sakelar di atas untuk menerima layar iPad lewat AirPlay.",
+                NULL, FALSE, TRUE);
+    g_free(info);
+    if (show_qr) {
+        Row *b = add_row(ROW_BUTTONS, 0, NULL, NULL, FALSE, TRUE);
+        row_opt(b, copied ? "Tersalin" : "Salin alamat", ID_COPY, FALSE);
+        row_opt(b, "Kode akses baru", ID_RESET_TOKEN, FALSE);
+    }
+
+    add_row(ROW_HEADER, 0, "Layar", NULL, FALSE, TRUE);
+    if (share) {
+        gboolean second = config.second && caps_second;
+        if (caps_second)
+            add_row(ROW_TOGGLE, ID_SECOND, "Jadikan iPad layar kedua", "Layar tambahan di samping layar yang ada",
+                    second, TRUE);
+        if (second) {
+            /* Keterangan: resolusi pilihan yang sedang dipakai, mis. 1280×800. */
+            char *cap = NULL;
+            for (guint i = 0; i < G_N_ELEMENTS(second_sizes); i++) {
+                const char *open = strchr(second_sizes[i].label, '(');
+                if (g_strcmp0(config.second_size, second_sizes[i].id) == 0 && open)
+                    cap = g_strndup(open + 1, strcspn(open + 1, ")"));
+            }
+            Row *z = add_row(ROW_SEGMENT, 0, "Ukuran", cap, FALSE, TRUE);
+            g_free(cap);
+            for (guint i = 0; i < G_N_ELEMENTS(second_sizes); i++) {
+                char *l = short_label(second_sizes[i].label);
+                row_opt(z, l, ID_SIZE_BASE + i, g_strcmp0(config.second_size, second_sizes[i].id) == 0);
+                g_free(l);
+            }
+            Row *k = add_row(ROW_SEGMENT, 0, "Skala", NULL, FALSE, TRUE);
+            for (guint i = 0; i < G_N_ELEMENTS(second_scales); i++)
+                row_opt(k, g_str_equal(second_scales[i].id, "ikut") ? "Ikut" : second_scales[i].label,
+                        ID_SCALE_BASE + i, g_strcmp0(config.second_scale, second_scales[i].id) == 0);
+        } else if (monitors && monitors->len > 1) {
+            const Monitor *sel = selected_monitor();
+            for (guint i = 0; i < monitors->len && i < 8; i++) {
+                const Monitor *x = &g_array_index(monitors, Monitor, i);
+                char *cap = g_strdup_printf("%d×%d%s", x->width, x->height, x->primary ? " · utama" : "");
+                add_row(ROW_RADIO, ID_MONITOR_BASE + i, x->name, cap, sel == x, TRUE);
+                g_free(cap);
+            }
+        }
+        const char *qid = service_share ? "monitor" : config.quality;
+        const char *qcap = NULL;
+        for (guint i = 0; i < G_N_ELEMENTS(qualities); i++)
+            if (g_strcmp0(qid, qualities[i].id) == 0)
+                qcap = qualities[i].caption;
+        Row *q = add_row(ROW_SEGMENT, 0, "Kualitas", qcap, FALSE, TRUE);
+        for (guint i = 0; i < G_N_ELEMENTS(qualities); i++)
+            row_opt(q, qualities[i].label, ID_QUALITY_BASE + i, g_strcmp0(qid, qualities[i].id) == 0);
+    } else {
+        add_row(ROW_TOGGLE, ID_FULLSCREEN, "Layar penuh", "Layar iPad memenuhi monitor", config.fullscreen, TRUE);
+    }
+
+    if (g_strcmp0(caps_hotspot, "no") != 0 || hotspot_active) {
+        add_row(ROW_HEADER, 0, "Hotspot", NULL, FALSE, TRUE);
+        add_row(ROW_TOGGLE, ID_HOTSPOT, "Hotspot langsung",
+                hotspot_busy ? "Sedang diproses…"
+                : hotspot_active ? "iPad tersambung langsung ke laptop ini"
+                : "Untuk jaringan kampus seperti eduroam",
+                hotspot_active, !hotspot_busy);
+        if (hotspot_active && hotspot_qr && *hotspot_qr && !hotspot_editing) {
+            Row *q = add_row(ROW_QR, 1, NULL, NULL, FALSE, TRUE);
+            if (q)
+                q->qr = hotspot_qr;
+            char *t = hotspot_text();
+            add_row(ROW_INFO, 0, t, NULL, FALSE, TRUE);
+            g_free(t);
+        }
+        if (hotspot_editing) {
+            add_row(ROW_FIELD, 1, "Nama Wi-Fi", NULL, FALSE, TRUE);
+            add_row(ROW_FIELD, 2, "Kata sandi (8–63 karakter)", NULL, FALSE, TRUE);
+            if (hotspot_note)
+                add_row(ROW_NOTE, 0, hotspot_note, NULL, FALSE, TRUE);
+            Row *b = add_row(ROW_BUTTONS, 0, NULL, NULL, FALSE, TRUE);
+            row_opt(b, "Batal", ID_HOTSPOT_CANCEL, FALSE);
+            row_opt(b, "Simpan", ID_HOTSPOT_SAVE, TRUE);
+        } else {
+            add_row(ROW_ACTION, ID_HOTSPOT_CONFIG, "Ubah nama dan kata sandi", NULL, FALSE, TRUE);
+        }
+    }
+
+    add_row(ROW_HEADER, 0, "Lainnya", NULL, FALSE, TRUE);
+    if (caps_service)
+        add_row(ROW_TOGGLE, ID_BOOT, "iPad aktif di sesi berikutnya", "Termasuk layar login Windows",
+                service_enabled, TRUE);
+    add_row(ROW_TOGGLE, ID_AUTOSTART, "Mulai saat masuk Windows", NULL, autostart_enabled(), TRUE);
+    add_row(ROW_NOTE, 0, "Ctrl+Alt+I membuka atau menutup panel ini.", NULL, FALSE, TRUE);
+    add_row(ROW_ACTION, ID_EXIT, "Keluar dari Tsunagu-Pad", "Panel dan ikon di samping jam ditutup", FALSE, TRUE);
+}
+
+static RECT title_switch(const Row *r)
+{
+    int cy = r->box.top + S(32);
+    RECT sw = { r->box.right - S(14) - S(SWITCH_W), cy - S(SWITCH_H) / 2, r->box.right - S(14), cy + S(SWITCH_H) / 2 };
+    return sw;
+}
+
+static RECT field_box(const Row *r)
+{
+    RECT f = { r->box.left + S(14), r->box.top + S(22), r->box.right - S(14), r->box.top + S(22) + S(36) };
+    return f;
+}
+
+static void layout_rows(HDC dc)
+{
+    build_rows();
+    int x0 = S(12), x1 = S(PANEL_W) - S(12), y = S(6);
+    for (int i = 0; i < nrows; i++) {
+        Row *r = &rows[i];
+        int h;
+        switch (r->kind) {
+        case ROW_TITLE:
+            h = S(64);
+            break;
+        case ROW_HEADER:
+            y += S(8);
+            h = S(26);
+            break;
+        case ROW_SEGMENT:
+            if (r->label)
+                y += S(8);
+            h = (r->label ? S(22) : 0) + S(34) + (r->caption && *r->caption ? S(22) : 0) + S(6);
+            break;
+        case ROW_NOTE:
+            h = text_height(dc, font_small, r->label, x1 - x0 - S(28)) + S(10);
+            break;
+        case ROW_INFO:
+            h = text_height(dc, font_small, r->label, x1 - x0 - S(20)) + S(12);
+            break;
+        case ROW_QR:
+            h = S(r->cmd == 1 ? hqr_dip : qr_dip) + S(22);
+            break;
+        case ROW_BUTTONS:
+            h = S(48);
+            break;
+        case ROW_FIELD:
+            h = S(62);
+            break;
+        default:
+            h = r->caption && *r->caption ? S(52) : S(40);
+        }
+        SetRect(&r->box, x0, y, x1, y + h);
+        SetRectEmpty(&r->hit);
+        switch (r->kind) {
+        case ROW_TITLE: {
+            RECT sw = title_switch(r);
+            InflateRect(&sw, S(6), S(10));
+            r->hit = sw;
+            break;
+        }
+        case ROW_SEGMENT: {
+            int top = y + (r->label ? S(22) : 0);
+            int gx0 = x0 + S(8), gx1 = x1 - S(8), gap = S(4);
+            int ow = r->nopts ? (gx1 - gx0 - S(6) - gap * (r->nopts - 1)) / r->nopts : 0;
+            for (int k = 0; k < r->nopts; k++) {
+                int ox = gx0 + S(3) + k * (ow + gap);
+                SetRect(&r->opt_box[k], ox, top + S(3), ox + ow, top + S(31));
+            }
+            break;
+        }
+        case ROW_BUTTONS: {
+            int gx0 = x0 + S(8), gx1 = x1 - S(8), gap = S(8);
+            int bw = r->nopts ? (gx1 - gx0 - gap * (r->nopts - 1)) / r->nopts : 0;
+            for (int k = 0; k < r->nopts; k++)
+                SetRect(&r->opt_box[k], gx0 + k * (bw + gap), y + S(8), gx0 + k * (bw + gap) + bw, y + S(40));
+            break;
+        }
+        case ROW_QR: {
+            int size = S(r->cmd == 1 ? hqr_dip : qr_dip), cx = (x0 + x1) / 2;
+            SetRect(&r->opt_box[0], cx - size / 2, y + S(10), cx + size / 2, y + S(10) + size);
+            break;
+        }
+        case ROW_RADIO:
+        case ROW_TOGGLE:
+        case ROW_ACTION:
+            r->hit = r->box;
+            break;
+        }
+        y += h + S(2);
+    }
+    content_height = y + S(8);
+}
+
+static void clamp_scroll(void)
+{
+    int max = MAX(0, content_height - panel_height);
+    scroll_y = CLAMP(scroll_y, 0, max);
+}
+
+static void paint_switch(HDC sdc, Palette c, RECT sw, gboolean on, gboolean enabled)
+{
+    int cy = (sw.top + sw.bottom) / 2;
+    if (on) {
+        shape(sdc, sw, S(SWITCH_H) / 2, enabled ? c.accent : c.muted, CLR_INVALID);
+        RECT knob = { sw.right - S(16), cy - S(6), sw.right - S(4), cy + S(6) };
+        shape(sdc, knob, S(6), c.on_fg, CLR_INVALID);
+    } else {
+        shape(sdc, sw, S(SWITCH_H) / 2, c.bg, c.muted);
+        RECT knob = { sw.left + S(5), cy - S(5), sw.left + S(15), cy + S(5) };
+        shape(sdc, knob, S(5), c.muted, CLR_INVALID);
+    }
+}
+
+static void paint_rows_shapes(HDC sdc, Palette c)
+{
+    for (int i = 0; i < nrows; i++) {
+        Row *r = &rows[i];
+        gboolean hot = hover_row == i && r->enabled;
+        int cy = (r->box.top + r->box.bottom) / 2;
+        switch (r->kind) {
+        case ROW_TITLE:
+            paint_switch(sdc, c, title_switch(r), r->checked, r->enabled);
+            break;
+        case ROW_SEGMENT: {
+            if (!r->nopts)
+                break;
+            RECT group = { r->opt_box[0].left - S(3), r->opt_box[0].top - S(3), r->opt_box[r->nopts - 1].right + S(3),
+                           r->opt_box[0].bottom + S(3) };
+            shape(sdc, group, S(6), c.tile, c.border);
+            for (int k = 0; k < r->nopts; k++) {
+                if (k == r->selected)
+                    shape(sdc, r->opt_box[k], S(4), r->enabled ? c.accent : c.muted, CLR_INVALID);
+                else if (hot && hover_opt == k)
+                    shape(sdc, r->opt_box[k], S(4), c.tile_hover, CLR_INVALID);
+            }
+            break;
+        }
+        case ROW_RADIO:
+            if (r->checked || hot)
+                shape(sdc, r->box, S(6), hot ? c.tile_hover : c.tile, CLR_INVALID);
+            if (r->checked) {
+                /* Penanda pilihan seperti daftar di Windows 11: garis aksen di kiri. */
+                RECT pill = { r->box.left + S(3), cy - S(8), r->box.left + S(6), cy + S(8) };
+                shape(sdc, pill, S(2), r->enabled ? c.accent : c.muted, CLR_INVALID);
+            }
+            break;
+        case ROW_ACTION:
+        case ROW_TOGGLE:
+            if (hot)
+                shape(sdc, r->box, S(6), c.tile_hover, CLR_INVALID);
+            if (r->kind == ROW_TOGGLE) {
+                RECT sw = { r->box.right - S(14) - S(SWITCH_W), cy - S(SWITCH_H) / 2, r->box.right - S(14),
+                            cy + S(SWITCH_H) / 2 };
+                paint_switch(sdc, c, sw, r->checked, r->enabled);
+            }
+            break;
+        case ROW_QR: {
+            RECT q = r->opt_box[0];
+            InflateRect(&q, S(6), S(6));
+            shape(sdc, q, S(10), RGB(255, 255, 255), CLR_INVALID);
+            break;
+        }
+        case ROW_BUTTONS:
+            for (int k = 0; k < r->nopts; k++) {
+                gboolean h = hot && hover_opt == k;
+                if (k == r->selected)
+                    shape(sdc, r->opt_box[k], S(4), h ? c.accent_hover : c.accent, CLR_INVALID);
+                else
+                    shape(sdc, r->opt_box[k], S(4), h ? c.tile_hover : c.tile, c.border);
+            }
+            break;
+        case ROW_FIELD:
+            shape(sdc, field_box(r), S(4), c.tile, c.border);
+            break;
+        }
+    }
+}
+
+static void paint_rows_text(HDC dc, Palette c)
+{
+    for (int i = 0; i < nrows; i++) {
+        Row *r = &rows[i];
+        COLORREF fg = r->enabled ? c.fg : c.muted;
+        int right = r->box.right - S(14) - (r->kind == ROW_TOGGLE ? S(SWITCH_W) + S(12) : 0);
+        RECT t = { r->box.left + S(14), r->box.top, right, r->box.bottom };
+        switch (r->kind) {
+        case ROW_TITLE: {
+            RECT sw = title_switch(r);
+            RECT icon = { r->box.left + S(8), r->box.top + S(14), r->box.left + S(40), r->box.top + S(50) };
+            draw_glyph(dc, L"", icon, font_icon, c.fg);
+            RECT a = { r->box.left + S(46), r->box.top + S(12), sw.left - S(10), r->box.top + S(34) };
+            RECT b = { r->box.left + S(46), r->box.top + S(34), sw.left - S(10), r->box.top + S(54) };
+            draw_text(dc, r->label, a, font_bold, c.fg, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            draw_text(dc, r->caption, b, font_small, c.muted, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            break;
+        }
+        case ROW_HEADER:
+            draw_text(dc, r->label, t, font_small, c.muted, DT_SINGLELINE | DT_BOTTOM | DT_LEFT | DT_END_ELLIPSIS);
+            break;
+        case ROW_SEGMENT: {
+            if (r->label) {
+                RECT l = { t.left, r->box.top, t.right, r->box.top + S(20) };
+                draw_text(dc, r->label, l, font_small, c.muted, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+            }
+            for (int k = 0; k < r->nopts; k++)
+                draw_text(dc, r->opts[k], r->opt_box[k], font_small,
+                          k == r->selected ? c.on_fg : fg, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS);
+            if (r->caption && *r->caption && r->nopts) {
+                RECT cap = { t.left, r->opt_box[0].bottom + S(5), t.right, r->opt_box[0].bottom + S(25) };
+                draw_text(dc, r->caption, cap, font_small, c.muted, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            }
+            break;
+        }
+        case ROW_NOTE:
+            t.top += S(4);
+            draw_text(dc, r->label, t, font_small, c.muted, DT_WORDBREAK | DT_LEFT);
+            break;
+        case ROW_INFO: {
+            RECT ir = { r->box.left + S(10), r->box.top + S(4), r->box.right - S(10), r->box.bottom };
+            draw_text(dc, r->label, ir, font_small, c.fg, DT_WORDBREAK | DT_CENTER);
+            break;
+        }
+        case ROW_QR:
+            paint_qr(dc, r->opt_box[0], r->qr);
+            break;
+        case ROW_BUTTONS:
+            for (int k = 0; k < r->nopts; k++)
+                draw_text(dc, r->opts[k], r->opt_box[k], font_normal, k == r->selected ? c.on_fg : c.fg,
+                          DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_END_ELLIPSIS);
+            break;
+        case ROW_FIELD: {
+            RECT l = { t.left, r->box.top, t.right, r->box.top + S(20) };
+            draw_text(dc, r->label, l, font_small, c.muted, DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+            break;
+        }
+        default:
+            if (r->caption && *r->caption) {
+                RECT a = { t.left, r->box.top + S(7), t.right, r->box.top + S(28) };
+                RECT b = { t.left, r->box.top + S(28), t.right, r->box.bottom - S(5) };
+                draw_text(dc, r->label, a, font_normal, fg, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+                draw_text(dc, r->caption, b, font_small, c.muted, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            } else {
+                draw_text(dc, r->label, t, font_normal, fg, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            }
+        }
+    }
+}
+
 static void paint_panel(HWND h)
 {
     PAINTSTRUCT ps;
@@ -1577,7 +1772,8 @@ static void paint_panel(HWND h)
     HDC dc = CreateCompatibleDC(wdc);
     HBITMAP bmp = CreateCompatibleBitmap(wdc, w, ht);
     HGDIOBJ old_bmp = SelectObject(dc, bmp);
-    build_layout(dc);
+    layout_rows(dc);
+    clamp_scroll();
 
     /* Lapisan bentuk: digambar 3x lebih besar lalu diperkecil dengan HALFTONE. */
     HDC sdc = CreateCompatibleDC(wdc);
@@ -1587,26 +1783,16 @@ static void paint_panel(HWND h)
     HBRUSH bg = CreateSolidBrush(c.bg);
     FillRect(sdc, &all, bg);
     DeleteObject(bg);
-    for (int i = 0; i < ntiles; i++) {
-        Tile *t = &tiles[i];
-        gboolean hot = hover_tile == i && t->enabled;
-        COLORREF fill = t->on ? (hot ? c.accent_hover : c.accent) : (hot ? c.tile_hover : c.tile);
-        shape(sdc, t->box, S(6), fill, t->on ? CLR_INVALID : c.border);
+    SetViewportOrgEx(sdc, 0, -scroll_y * SS, NULL);
+    paint_rows_shapes(sdc, c);
+    SetViewportOrgEx(sdc, 0, 0, NULL);
+    if (content_height > ht) {
+        /* Penanda gulir tipis di kanan. */
+        int track = MAX(S(24), ht * ht / content_height);
+        int pos = (ht - track) * scroll_y / MAX(1, content_height - ht);
+        RECT bar = { w - S(6), pos + S(4), w - S(3), pos + track - S(4) };
+        shape(sdc, bar, S(2), c.muted, CLR_INVALID);
     }
-    if (!IsRectEmpty(&qr_rect)) {
-        RECT q = qr_rect;
-        InflateRect(&q, S(6), S(6));
-        shape(sdc, q, S(10), RGB(255, 255, 255), CLR_INVALID);
-    }
-    if (!IsRectEmpty(&hqr_rect)) {
-        RECT q = hqr_rect;
-        InflateRect(&q, S(6), S(6));
-        shape(sdc, q, S(10), RGB(255, 255, 255), CLR_INVALID);
-    }
-    if (!IsRectEmpty(&copy_rect))
-        shape(sdc, copy_rect, S(6), hover_copy ? c.tile_hover : c.tile, c.border);
-    if (hover_settings)
-        shape(sdc, settings_rect, S(6), c.tile_hover, CLR_INVALID);
     SetStretchBltMode(dc, HALFTONE);
     SetBrushOrgEx(dc, 0, 0, NULL);
     StretchBlt(dc, 0, 0, w, ht, sdc, 0, 0, w * SS, ht * SS, SRCCOPY);
@@ -1615,78 +1801,9 @@ static void paint_panel(HWND h)
     DeleteDC(sdc);
 
     SetBkMode(dc, TRANSPARENT);
-    int left = (S(PANEL_W) - 3 * S(TILE_W) - 2 * S(TILE_GAP)) / 2;
-    int cw = w - 2 * left;
-    RECT title = { left, S(18), w - left, S(18) + S(24) };
-    draw_text(dc, "Tsunagu-Pad", title, font_bold, c.fg, DT_SINGLELINE | DT_LEFT);
-    const char *sub = share_mode() ? "Layar Windows ke iPad" : "Layar iPad ke Windows (AirPlay)";
-    RECT subr = { left, S(44), w - left, S(44) + S(18) };
-    draw_text(dc, sub, subr, font_small, c.muted, DT_SINGLELINE | DT_LEFT | DT_END_ELLIPSIS);
-
-    for (int i = 0; i < ntiles; i++) {
-        Tile *t = &tiles[i];
-        COLORREF fg = !t->enabled ? c.muted : t->on ? c.on_fg : c.fg;
-        RECT main = t->box;
-        if (t->split) {
-            main.right = t->chevron.left;
-            HPEN p = CreatePen(PS_SOLID, 1, t->on ? c.accent_hover : c.border);
-            HGDIOBJ op = SelectObject(dc, p);
-            MoveToEx(dc, t->chevron.left, t->box.top + S(1), NULL);
-            LineTo(dc, t->chevron.left, t->box.bottom - S(1));
-            SelectObject(dc, op);
-            DeleteObject(p);
-            draw_glyph(dc, L"", t->chevron, font_icon_small, fg);
-        }
-        draw_glyph(dc, t->glyph, main, font_icon, fg);
-        RECT label = { t->box.left - S(4), t->box.bottom + S(6), t->box.right + S(4), t->box.bottom + S(26) };
-        draw_text(dc, t->label, label, font_small, t->enabled ? c.fg : c.muted,
-                  DT_SINGLELINE | DT_CENTER | DT_END_ELLIPSIS);
-    }
-
-    int y = tiles[ntiles - 1].box.bottom + S(34) + S(4);
-    if (!IsRectEmpty(&qr_rect) || !IsRectEmpty(&hqr_rect) || g_strcmp0(child_kind, "receive") == 0) {
-        HPEN p = CreatePen(PS_SOLID, 1, c.line);
-        HGDIOBJ op = SelectObject(dc, p);
-        MoveToEx(dc, 0, y + S(4), NULL);
-        LineTo(dc, w, y + S(4));
-        SelectObject(dc, op);
-        DeleteObject(p);
-    }
-    if (!IsRectEmpty(&qr_rect)) {
-        paint_qr(dc, qr_rect, qr_rows);
-        y = qr_rect.bottom + S(10);
-    } else if (g_strcmp0(child_kind, "receive") == 0) {
-        y += S(14);
-    }
-    char *info = info_text();
-    if (info) {
-        RECT ir = { left, y, left + cw, y + S(200) };
-        draw_text(dc, info, ir, font_small, c.fg, DT_WORDBREAK | DT_CENTER);
-        g_free(info);
-    }
-    if (!IsRectEmpty(&copy_rect))
-        draw_text(dc, copied ? "Tersalin" : "Salin alamat", copy_rect, font_normal, c.fg,
-                  DT_SINGLELINE | DT_CENTER | DT_VCENTER);
-    if (!IsRectEmpty(&hqr_rect)) {
-        paint_qr(dc, hqr_rect, hotspot_qr);
-        char *t = hotspot_text();
-        RECT hr = { left, hqr_rect.bottom + S(8), left + cw, hqr_rect.bottom + S(8) + S(120) };
-        draw_text(dc, t, hr, font_small, c.fg, DT_WORDBREAK | DT_CENTER);
-        g_free(t);
-    }
-
-    /* Kaki panel, dengan latar sedikit berbeda seperti Quick Settings. */
-    RECT foot = { 0, settings_rect.top - S(8), w, ht };
-    HPEN p = CreatePen(PS_SOLID, 1, c.line);
-    HGDIOBJ op = SelectObject(dc, p);
-    MoveToEx(dc, 0, foot.top, NULL);
-    LineTo(dc, w, foot.top);
-    SelectObject(dc, op);
-    DeleteObject(p);
-    RECT hint = { left, settings_rect.top, settings_rect.left - S(8), settings_rect.bottom };
-    draw_text(dc, "Ctrl+Alt+I membuka panel ini", hint, font_small, c.muted,
-              DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
-    draw_glyph(dc, L"", settings_rect, font_icon_small, c.fg);
+    SetViewportOrgEx(dc, 0, -scroll_y, NULL);
+    paint_rows_text(dc, c);
+    SetViewportOrgEx(dc, 0, 0, NULL);
 
     BitBlt(wdc, 0, 0, w, ht, dc, 0, 0, SRCCOPY);
     SelectObject(dc, old_bmp);
@@ -1695,139 +1812,234 @@ static void paint_panel(HWND h)
     EndPaint(h, &ps);
 }
 
-static void position_panel(void)
+/* ---------- isian hotspot ----------
+ * Kotak EDIT biasa di dalam panel, diwarnai sesuai tema lewat
+ * WM_CTLCOLOREDIT, dan ikut bergeser saat panel digulir. */
+
+static LRESULT CALLBACK edit_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_KEYDOWN) {
+        if (wp == VK_RETURN) {
+            PostMessageW(panel_hwnd, WM_COMMAND, ID_HOTSPOT_SAVE, 0);
+            return 0;
+        }
+        if (wp == VK_ESCAPE) {
+            PostMessageW(panel_hwnd, WM_COMMAND, ID_HOTSPOT_CANCEL, 0);
+            return 0;
+        }
+        if (wp == VK_TAB) {
+            SetFocus(h == edit_ssid ? edit_password : edit_ssid);
+            return 0;
+        }
+    }
+    if (msg == WM_CHAR && (wp == '\r' || wp == '\t' || wp == 27))
+        return 0;   /* tanpa bunyi "ding" */
+    if (msg == WM_MOUSEWHEEL)
+        return SendMessageW(panel_hwnd, msg, wp, lp);
+    return CallWindowProcW(edit_base_proc, h, msg, wp, lp);
+}
+
+static HWND make_field(const char *text)
+{
+    wchar_t *w = W(text ? text : "");
+    HWND e = CreateWindowExW(0, L"EDIT", w, WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 10, 10,
+                             panel_hwnd, NULL, instance, NULL);
+    g_free(w);
+    SendMessageW(e, WM_SETFONT, (WPARAM) font_normal, TRUE);
+    SendMessageW(e, EM_SETLIMITTEXT, 63, 0);
+    edit_base_proc = (WNDPROC) SetWindowLongPtrW(e, GWLP_WNDPROC, (LONG_PTR) edit_proc);
+    return e;
+}
+
+static void place_fields(void)
+{
+    if (!hotspot_editing) {
+        if (edit_ssid)
+            DestroyWindow(edit_ssid);
+        if (edit_password)
+            DestroyWindow(edit_password);
+        edit_ssid = edit_password = NULL;
+        return;
+    }
+    if (!edit_ssid) {
+        edit_ssid = make_field(hotspot_ssid);
+        edit_password = make_field(hotspot_password);
+    }
+    for (int i = 0; i < nrows; i++) {
+        if (rows[i].kind != ROW_FIELD)
+            continue;
+        HWND e = rows[i].cmd == 1 ? edit_ssid : edit_password;
+        RECT f = field_box(&rows[i]);
+        OffsetRect(&f, 0, -scroll_y);
+        int eh = S(20), top = (f.top + f.bottom - eh) / 2;
+        if (f.bottom < 0 || f.top > panel_height) {
+            ShowWindow(e, SW_HIDE);
+            continue;
+        }
+        MoveWindow(e, f.left + S(10), top, f.right - f.left - S(20), eh, TRUE);
+        ShowWindow(e, SW_SHOWNA);
+    }
+}
+
+/* Menggulir supaya baris pertama dengan jenis itu terlihat utuh. */
+static void scroll_to_kind(int kind, gboolean to_end)
+{
+    for (int i = 0; i < nrows; i++)
+        if (rows[i].kind == kind || (to_end && i == nrows - 1)) {
+            if (to_end)
+                scroll_y = content_height;
+            else if (rows[i].box.bottom + S(70) > scroll_y + panel_height)
+                scroll_y = rows[i].box.bottom + S(70) - panel_height;
+            break;
+        }
+    clamp_scroll();
+}
+
+static void hotspot_edit(gboolean on)
+{
+    hotspot_editing = on;
+    set_str(&hotspot_note, NULL);
+    position_panel(FALSE);
+    if (on)
+        scroll_to_kind(ROW_FIELD, FALSE);
+    place_fields();
+    InvalidateRect(panel_hwnd, NULL, FALSE);
+    if (on && edit_ssid)
+        SetFocus(edit_ssid);
+    else if (panel_hwnd)
+        SetFocus(panel_hwnd);
+}
+
+static void hotspot_save(void)
+{
+    wchar_t ws[128] = L"", wp[128] = L"";
+    if (edit_ssid)
+        GetWindowTextW(edit_ssid, ws, G_N_ELEMENTS(ws));
+    if (edit_password)
+        GetWindowTextW(edit_password, wp, G_N_ELEMENTS(wp));
+    char *ssid = U(ws), *password = U(wp);
+    g_strstrip(ssid);
+    gboolean ssid_ok = strlen(ssid) >= 1 && strlen(ssid) <= 32;
+    for (const char *p = ssid; ssid_ok && *p; p++)
+        ssid_ok = (guchar) *p >= 0x20 && *p != 0x7f;
+    gboolean pass_ok = strlen(password) >= 8 && strlen(password) <= 63;
+    for (const char *p = password; pass_ok && *p; p++)
+        pass_ok = *p >= 0x20 && *p <= 0x7e;
+    gboolean saved = FALSE;
+    if (!ssid_ok) {
+        set_str(&hotspot_note, "Nama Wi-Fi harus 1–32 byte.");
+    } else if (!pass_ok) {
+        set_str(&hotspot_note, "Kata sandi harus 8–63 karakter: huruf, angka, simbol, atau spasi "
+                               "(tanpa emoji atau huruf beraksen).");
+    } else {
+        char *input = g_strdup_printf("%s\n", password);
+        task_run(TASK_HOTSPOT_CONFIG, ssid, NULL, input);
+        memset(input, 0, strlen(input));
+        g_free(input);
+        saved = TRUE;
+    }
+    SecureZeroMemory(wp, sizeof wp);
+    memset(password, 0, strlen(password));
+    g_free(password);
+    g_free(ssid);
+    if (saved) {
+        hotspot_edit(FALSE);
+    } else {
+        position_panel(FALSE);
+        place_fields();
+    }
+}
+
+/* ---------- letak dan masukan ---------- */
+
+static void position_panel(gboolean raise)
 {
     if (!panel_hwnd)
         return;
     /* Di atas area notifikasi pada monitor tempat taskbar berada. */
     APPBARDATA abd = { .cbSize = sizeof abd };
-    RECT wa;
     HMONITOR mon = SHAppBarMessage(ABM_GETTASKBARPOS, &abd)
         ? MonitorFromRect(&abd.rc, MONITOR_DEFAULTTOPRIMARY) : MonitorFromWindow(NULL, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi = { .cbSize = sizeof mi };
     GetMonitorInfoW(mon, &mi);
-    wa = mi.rcWork;
-    /* Layar laptop yang pendek: QR diperkecil sampai panelnya muat. */
+    RECT wa = mi.rcWork;
+    int max_h = (wa.bottom - wa.top) - S(24);
+    /* Layar pendek: QR diperkecil dulu; sisanya bisa digulir. */
     HDC dc = GetDC(panel_hwnd);
     qr_dip = QR_MAX;
     hqr_dip = 150;
-    build_layout(dc);
-    while (panel_height > (wa.bottom - wa.top) - S(24) && qr_dip > 120) {
+    layout_rows(dc);
+    while (content_height > max_h && qr_dip > 150) {
         qr_dip -= 12;
-        hqr_dip = MAX(100, hqr_dip - 10);
-        build_layout(dc);
+        hqr_dip = MAX(110, hqr_dip - 10);
+        layout_rows(dc);
     }
     ReleaseDC(panel_hwnd, dc);
-    int width = S(PANEL_W), x = wa.right - width - S(12), y = wa.bottom - panel_height - S(12);
-    SetWindowPos(panel_hwnd, HWND_TOPMOST, x, MAX(wa.top + S(12), y), width, panel_height, SWP_NOACTIVATE);
+    panel_height = MIN(content_height, max_h);
+    clamp_scroll();
+    int width = S(PANEL_W), x = wa.right - width - S(12), y = MAX(wa.top + S(12), wa.bottom - panel_height - S(12));
+    RECT now;
+    GetWindowRect(panel_hwnd, &now);
+    if (raise)
+        SetWindowPos(panel_hwnd, HWND_TOPMOST, x, y, width, panel_height, SWP_NOACTIVATE);
+    else if (now.left != x || now.top != y || now.right - now.left != width || now.bottom - now.top != panel_height)
+        SetWindowPos(panel_hwnd, NULL, x, y, width, panel_height, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+    place_fields();
     InvalidateRect(panel_hwnd, NULL, FALSE);
-}
-
-static void popup_menu(HMENU m, RECT anchor)
-{
-    UINT cmd = TrackPopupMenu(m, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD,
-                              anchor.left, anchor.bottom, 0, panel_hwnd, NULL);
-    PostMessageW(panel_hwnd, WM_NULL, 0, 0);
-    DestroyMenu(m);
-    if (cmd)
-        on_command(cmd);
-}
-
-static void second_menu(RECT anchor)
-{
-    HMENU m = CreatePopupMenu();
-    for (guint i = 0; i < G_N_ELEMENTS(second_sizes); i++)
-        add_item(m, ID_SIZE_BASE + i, second_sizes[i].label, g_strcmp0(config.second_size, second_sizes[i].id) == 0,
-                 TRUE, TRUE);
-    AppendMenuW(m, MF_SEPARATOR, 0, NULL);
-    for (guint i = 0; i < G_N_ELEMENTS(second_scales); i++) {
-        char *label = g_strdup_printf("Skala %s", second_scales[i].label);
-        add_item(m, ID_SCALE_BASE + i, label, g_strcmp0(config.second_scale, second_scales[i].id) == 0, TRUE, TRUE);
-        g_free(label);
-    }
-    popup_menu(m, anchor);
-}
-
-static void quality_menu(RECT anchor)
-{
-    HMENU m = CreatePopupMenu();
-    const char *qid = service_share ? "monitor" : config.quality;
-    for (guint i = 0; i < G_N_ELEMENTS(qualities); i++) {
-        char *label = g_strdup_printf("%s — %s", qualities[i].label, qualities[i].caption);
-        add_item(m, ID_QUALITY_BASE + i, label, g_strcmp0(qid, qualities[i].id) == 0, TRUE, TRUE);
-        g_free(label);
-    }
-    popup_menu(m, anchor);
-}
-
-static RECT screen_rect(RECT r)
-{
-    MapWindowPoints(panel_hwnd, NULL, (POINT *) &r, 2);
-    return r;
 }
 
 static void panel_click(POINT pt)
 {
-    for (int i = 0; i < ntiles; i++) {
-        Tile *t = &tiles[i];
-        if (!t->enabled || !PtInRect(&t->box, pt))
+    pt.y += scroll_y;
+    for (int i = 0; i < nrows; i++) {
+        Row *r = &rows[i];
+        if (!r->enabled)
             continue;
-        gboolean chevron = t->split && PtInRect(&t->chevron, pt);
-        switch (t->id) {
-        case TILE_MAIN:
-            if (chevron) {
-                RECT r = screen_rect(t->box);
-                POINT p = { r.left, r.bottom };
-                show_menu_at(panel_hwnd, p, TRUE);
-            } else {
-                on_command(ID_TOGGLE);
-            }
-            break;
-        case TILE_RECEIVE:
-            on_command(share_mode() ? ID_MODE_RECEIVE : ID_MODE_SHARE);
-            break;
-        case TILE_SECOND:
-            if (chevron)
-                second_menu(screen_rect(t->box));
-            else
-                on_command(ID_SECOND);
-            break;
-        case TILE_HOTSPOT:
-            on_command(chevron ? ID_HOTSPOT_CONFIG : ID_HOTSPOT);
-            break;
-        case TILE_BOOT:
-            on_command(ID_BOOT);
-            break;
-        case TILE_QUALITY:
-            quality_menu(screen_rect(t->box));
-            break;
+        UINT cmd = 0;
+        if (r->kind == ROW_SEGMENT || r->kind == ROW_BUTTONS) {
+            for (int k = 0; k < r->nopts && !cmd; k++)
+                if (PtInRect(&r->opt_box[k], pt))
+                    cmd = r->kind == ROW_SEGMENT && k == r->selected ? 0 : r->opt_cmd[k];
+            if (!PtInRect(&r->box, pt))
+                continue;
+        } else if (!IsRectEmpty(&r->hit) && PtInRect(&r->hit, pt)) {
+            cmd = r->cmd;
+        } else {
+            continue;
         }
+        if (cmd == ID_HOTSPOT_SAVE)
+            hotspot_save();
+        else if (cmd == ID_HOTSPOT_CANCEL)
+            hotspot_edit(FALSE);
+        else if (cmd == ID_HOTSPOT_CONFIG)
+            hotspot_edit(TRUE);
+        else if (cmd)
+            on_command(cmd);
         return;
-    }
-    if (!IsRectEmpty(&copy_rect) && PtInRect(&copy_rect, pt))
-        on_command(ID_COPY);
-    else if (PtInRect(&settings_rect, pt)) {
-        RECT r = screen_rect(settings_rect);
-        POINT p = { r.left, r.top };
-        show_menu(panel_hwnd, p);
     }
 }
 
 static void panel_hover(POINT pt)
 {
-    int tile = -1, part = 0;
-    for (int i = 0; i < ntiles && tile < 0; i++)
-        if (PtInRect(&tiles[i].box, pt)) {
-            tile = i;
-            part = tiles[i].split && PtInRect(&tiles[i].chevron, pt) ? 2 : 1;
+    pt.y += scroll_y;
+    int row = -1, opt = -1;
+    for (int i = 0; i < nrows && row < 0; i++) {
+        Row *r = &rows[i];
+        if (!r->enabled)
+            continue;
+        if (r->kind == ROW_SEGMENT || r->kind == ROW_BUTTONS) {
+            for (int k = 0; k < r->nopts; k++)
+                if (PtInRect(&r->opt_box[k], pt)) {
+                    row = i;
+                    opt = k;
+                }
+        } else if (!IsRectEmpty(&r->hit) && PtInRect(&r->hit, pt)) {
+            row = i;
         }
-    gboolean copy = !IsRectEmpty(&copy_rect) && PtInRect(&copy_rect, pt);
-    gboolean settings = PtInRect(&settings_rect, pt);
-    if (tile != hover_tile || part != hover_part || copy != hover_copy || settings != hover_settings) {
-        hover_tile = tile;
-        hover_part = part;
-        hover_copy = copy;
-        hover_settings = settings;
+    }
+    if (row != hover_row || opt != hover_opt) {
+        hover_row = row;
+        hover_opt = opt;
         InvalidateRect(panel_hwnd, NULL, FALSE);
     }
     if (!mouse_tracking) {
@@ -1851,34 +2063,64 @@ static LRESULT CALLBACK panel_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_MOUSELEAVE:
         mouse_tracking = FALSE;
-        hover_tile = -1;
-        hover_copy = hover_settings = FALSE;
+        hover_row = hover_opt = -1;
         InvalidateRect(h, NULL, FALSE);
         return 0;
+    case WM_MOUSEWHEEL: {
+        int before = scroll_y;
+        scroll_y -= GET_WHEEL_DELTA_WPARAM(wp) * S(48) / WHEEL_DELTA;
+        clamp_scroll();
+        if (scroll_y != before) {
+            place_fields();
+            InvalidateRect(h, NULL, FALSE);
+        }
+        return 0;
+    }
     case WM_LBUTTONUP: {
         POINT pt = { (short) LOWORD(lp), (short) HIWORD(lp) };
         panel_click(pt);
         return 0;
     }
-    case WM_RBUTTONUP: {
-        POINT pt;
-        GetCursorPos(&pt);
-        show_menu_at(panel_hwnd, pt, TRUE);
-        return 0;
-    }
     case WM_ACTIVATE:
-        if (LOWORD(wp) == WA_INACTIVE && !dialog_hwnd)
+        if (LOWORD(wp) == WA_INACTIVE)
             ShowWindow(h, SW_HIDE);
         return 0;
     case WM_KEYDOWN:
-        if (wp == VK_ESCAPE)
-            ShowWindow(h, SW_HIDE);
+        if (wp == VK_ESCAPE) {
+            if (hotspot_editing)
+                hotspot_edit(FALSE);
+            else
+                ShowWindow(h, SW_HIDE);
+        } else if (wp == VK_DOWN || wp == VK_UP || wp == VK_NEXT || wp == VK_PRIOR) {
+            int step = wp == VK_DOWN ? S(48) : wp == VK_UP ? -S(48) : wp == VK_NEXT ? panel_height : -panel_height;
+            scroll_y += step;
+            clamp_scroll();
+            place_fields();
+            InvalidateRect(h, NULL, FALSE);
+        }
         return 0;
+    case WM_CTLCOLOREDIT: {
+        Palette c = palette();
+        if (field_brush_color != c.tile) {
+            if (field_brush)
+                DeleteObject(field_brush);
+            field_brush = CreateSolidBrush(c.tile);
+            field_brush_color = c.tile;
+        }
+        SetTextColor((HDC) wp, c.fg);
+        SetBkColor((HDC) wp, c.tile);
+        return (LRESULT) field_brush;
+    }
     case WM_SETTINGCHANGE:
         InvalidateRect(h, NULL, FALSE);   /* tema gelap/terang berganti */
         return 0;
     case WM_COMMAND:
-        on_command(LOWORD(wp));
+        if (LOWORD(wp) == ID_HOTSPOT_SAVE)
+            hotspot_save();
+        else if (LOWORD(wp) == ID_HOTSPOT_CANCEL)
+            hotspot_edit(FALSE);
+        else if (lp == 0)       /* bukan pemberitahuan dari kotak isian */
+            on_command(LOWORD(wp));
         return 0;
     case WM_CLOSE:
         ShowWindow(h, SW_HIDE);
@@ -1891,7 +2133,7 @@ static void show_panel(void)
 {
     if (!panel_hwnd) {
         panel_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"TsunaguPadPanel", L"Tsunagu-Pad",
-                                     WS_POPUP, 0, 0, S(PANEL_W), S(300), NULL, NULL, instance, NULL);
+                                     WS_POPUP | WS_CLIPCHILDREN, 0, 0, S(PANEL_W), S(300), NULL, NULL, instance, NULL);
         /* Sudut membulat dan bingkai tipis seperti flyout Windows 11
          * (diabaikan dengan aman di Windows 10). */
         typedef HRESULT (WINAPI *SetAttr)(HWND, DWORD, LPCVOID, DWORD);
@@ -1904,16 +2146,21 @@ static void show_panel(void)
             set_attr(panel_hwnd, 20, &dark, sizeof dark);      /* DWMWA_USE_IMMERSIVE_DARK_MODE */
         }
     }
-    position_panel();
+    hotspot_editing = FALSE;
+    scroll_y = 0;
+    position_panel(TRUE);
     ShowWindow(panel_hwnd, SW_SHOW);
     SetForegroundWindow(panel_hwnd);
 }
 
+/* Statistik datang tiap detik saat streaming. Panel hanya diberi ukuran
+ * baru tanpa diangkat lagi ke paling atas (HWND_TOPMOST hanya saat dibuka),
+ * dan tray hanya diperbarui bila isinya berubah. */
 static void sync_ui(void)
 {
     update_tray();
     if (panel_hwnd && IsWindowVisible(panel_hwnd))
-        position_panel();
+        position_panel(FALSE);
 }
 
 /* Windows 11 menyembunyikan ikon baru di balik tanda ^. Sekali saja, ikon
@@ -2010,7 +2257,13 @@ static void on_command(UINT id)
             task_run(TASK_HOTSPOT_SET, hotspot_active ? "off" : "on", NULL, NULL);
         }
     } else if (id == ID_HOTSPOT_CONFIG) {
-        show_hotspot_dialog();
+        show_panel();
+        hotspot_edit(TRUE);
+    } else if (id == ID_SETTINGS) {
+        show_panel();
+        scroll_to_kind(ROW_HEADER, TRUE);
+        place_fields();
+        InvalidateRect(panel_hwnd, NULL, FALSE);
     } else if (id == ID_BOOT) {
         char *token = token_path();
         if (!service_enabled && !g_file_test(token, G_FILE_TEST_EXISTS))
@@ -2039,15 +2292,13 @@ static LRESULT CALLBACK main_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         /* NOTIFYICON_VERSION_4: satu klik kiri juga mengirim WM_LBUTTONUP, dan
          * klik kanan juga WM_RBUTTONUP; hanya kabar versi 4 yang dipakai supaya
          * panel dan menu tidak terbuka dua kali. */
-        if (LOWORD(lp) == NIN_SELECT || LOWORD(lp) == NIN_KEYSELECT) {
+        if (LOWORD(lp) == NIN_SELECT || LOWORD(lp) == NIN_KEYSELECT || LOWORD(lp) == WM_CONTEXTMENU) {
+            /* Klik kanan juga membuka panel: semua pilihan ada di sana, tanpa
+             * menu putih bawaan Windows yang tidak mengikuti tema gelap. */
             if (panel_hwnd && IsWindowVisible(panel_hwnd))
                 ShowWindow(panel_hwnd, SW_HIDE);
             else
                 show_panel();
-        } else if (LOWORD(lp) == WM_CONTEXTMENU) {
-            POINT pt;
-            GetCursorPos(&pt);
-            show_menu(h, pt);
         }
         return 0;
     case WM_COMMAND:
@@ -2074,7 +2325,9 @@ static LRESULT CALLBACK main_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             ticks++;
             if (caps_service && ticks % 3 == 0)
                 task_run(TASK_SERVICE_STATUS, NULL, NULL, NULL);
-            if (hotspot_active && !hotspot_busy && ticks % 3 == 0)
+            /* Saat hotspot mati cukup tiap menit: untuk tahu jaringan yang
+             * dipakai laptop (mis. eduroam) dan petunjuknya di panel. */
+            if (!hotspot_busy && g_strcmp0(caps_hotspot, "no") != 0 && ticks % (hotspot_active ? 3 : 12) == 0)
                 task_run(TASK_HOTSPOT_STATUS, NULL, NULL, NULL);
         } else if (wp == TIMER_RECEIVER_RESTART) {
             KillTimer(h, TIMER_RECEIVER_RESTART);
@@ -2088,6 +2341,7 @@ static LRESULT CALLBACK main_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         } else if (wp == TIMER_DISPLAY) {
             KillTimer(h, TIMER_DISPLAY);
             task_run(TASK_CAPS, NULL, NULL, NULL);
+            task_run(TASK_MONITORS, NULL, NULL, NULL);
         } else if (wp == TIMER_PROMOTE) {
             /* Explorer baru mencatat ikon beberapa detik setelah muncul. */
             static int tries;
@@ -2202,11 +2456,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
     wc.style = CS_DROPSHADOW;
     wc.hCursor = LoadCursorW(NULL, (LPCWSTR) IDC_ARROW);
     RegisterClassExW(&wc);
-    wc.style = 0;
-    wc.lpfnWndProc = dialog_proc;
-    wc.lpszClassName = L"TsunaguPadDialog";
-    wc.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
-    RegisterClassExW(&wc);
 
     main_hwnd = CreateWindowExW(0, L"TsunaguPadTray", L"Tsunagu-Pad", 0, 0, 0, 0, 0, NULL, NULL, inst, NULL);
     taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
@@ -2249,6 +2498,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
 
     task_run(TASK_CAPS, NULL, NULL, NULL);
     SetTimer(main_hwnd, TIMER_POLL, 5000, NULL);
+    task_run(TASK_MONITORS, NULL, NULL, NULL);
     refresh_service_share();
     update_tray();
     if (toggle_arg)
@@ -2258,8 +2508,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
 
     MSG m;
     while (GetMessageW(&m, NULL, 0, 0)) {
-        if (dialog_hwnd && IsDialogMessageW(dialog_hwnd, &m))
-            continue;
         TranslateMessage(&m);
         DispatchMessageW(&m);
     }
