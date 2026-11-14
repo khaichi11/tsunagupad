@@ -274,7 +274,7 @@ Windows 11, 64-bit. Setiap fitur versi Ubuntu punya padanannya di Windows:
 | Tangkap layar lewat X11 atau PipeWire | DXGI Desktop Duplication, di GPU |
 | NVENC, Intel VA-API, x264 | NVENC, Intel Quick Sync, AMD AMF, Media Foundation, x264 |
 | Pena sebagai tablet uinput | Pena Windows Ink, dengan tekanan (1024 tingkat) dan kemiringan |
-| Layar kedua dari monitor virtual Mutter | Layar kedua dari Virtual Display Driver, monitor tanpa kabel |
+| Layar kedua dari monitor virtual Mutter | Layar kedua dari driver milik Tsunagu-Pad sendiri, monitor tanpa kabel |
 | UxPlay dari repositori Ubuntu | UxPlay ikut dibangun dan dibawa pemasang, dengan mDNS sendiri, jadi Bonjour Apple tidak perlu |
 | Hotspot di `ap0` virtual | Mobile Hotspot Windows, Wi-Fi utama tetap tersambung |
 | `make login-setup`, service systemd pengguna | Layanan Tsunagu-Pad: layar login dan sesi berikutnya di iPad |
@@ -285,14 +285,21 @@ Windows 11, 64-bit. Setiap fitur versi Ubuntu punya padanannya di Windows:
 Unduh `Tsunagu-Pad-<versi>-setup.exe` dari
 [halaman rilis](https://github.com/khaichi11/tsunagupad/releases) lalu jalankan.
 Pemasang membawa semua yang dibutuhkan, jadi tidak ada yang diunduh saat
-memasang. Kata sandi administrator diminta sekali, dan ada empat bagian:
+memasang. Pemasang dibuka dengan pilihan bahasa, English atau Bahasa Indonesia;
+kata sandi administrator diminta sekali, dan ada empat bagian:
 
 - **Tsunagu-Pad** (wajib): program, panel di area notifikasi, halaman iPad,
   AirPlay, dan aturan Windows Firewall yang hanya menerima subnet lokal dan
   Tailscale (`100.64.0.0/10`).
-- **Layar kedua**: memasang Virtual Display Driver (lisensi MIT, ditandatangani
-  SignPath Foundation untuk proyek Virtual Display Driver). Windows mungkin
-  bertanya sekali apakah perangkat lunak perangkat ini boleh dipasang.
+- **Layar kedua**: memasang Tsunagu-Pad Display, driver monitor virtual milik
+  Tsunagu-Pad sendiri (`windows/driver`). Driver ini berjalan di mode pengguna,
+  bukan di kernel. Windows hanya memasang driver yang tanda tangannya
+  dipercaya, jadi pemasang menandatanganinya di komputer Anda: membuat
+  sertifikat sekali pakai, menandatangani driver, mencatat sertifikat itu
+  sebagai tepercaya, lalu langsung menghapus kunci rahasianya, sehingga tidak
+  ada siapa pun yang bisa menandatangani apa pun lagi dengannya. Saat
+  Tsunagu-Pad dihapus, driver dan sertifikatnya ikut dihapus. Tanpa
+  sertifikat berbayar dan tanpa pihak ketiga.
 - **Layanan layar login dan sesi berikutnya**: layanan Windows yang tidak
   melakukan apa pun sampai sakelarnya dinyalakan di panel.
 - **`tsunagupad` di PATH**, untuk dipakai dari terminal atau lewat SSH. Yang
@@ -383,7 +390,10 @@ windows/build.sh        # dist/windows/Tsunagu-Pad-<versi>-setup.exe
 ```
 
 Skrip itu membangun program dan UxPlay, mengumpulkan plugin GStreamer dan
-DLL-nya, memeriksa checksum rilis Virtual Display Driver, lalu menjalankan NSIS.
+DLL-nya, lalu menjalankan NSIS. Driver layar kedua dibangun lebih dulu dengan
+Visual Studio dan WDK (`windows/driver/TsunaguPadDisplay.vcxproj`), dan
+berkasnya ditaruh di `dist/windows/driver`; tanpa berkas itu pemasang dibuat
+tanpa layar kedua.
 GitHub Actions menjalankan skrip yang sama di setiap push, memasang hasilnya
 tanpa tampilan di Windows yang bersih, lalu menguji kanal terenkripsi pada
 program yang terpasang.

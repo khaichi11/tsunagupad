@@ -271,7 +271,7 @@ The same program runs on Windows 10 (version 1809 or newer) and Windows 11,
 | Capture through X11 or PipeWire | DXGI Desktop Duplication, on the GPU |
 | NVENC, Intel VA-API, x264 | NVENC, Intel Quick Sync, AMD AMF, Media Foundation, x264 |
 | Pen as a uinput tablet | Pen as a Windows Ink pen, with pressure (1024 levels) and tilt |
-| Second screen from Mutter's virtual monitor | Second screen from the Virtual Display Driver, a monitor with no cable |
+| Second screen from Mutter's virtual monitor | Second screen from Tsunagu-Pad's own driver, a monitor with no cable |
 | UxPlay from the Ubuntu repositories | UxPlay built in and bundled, with its own mDNS, so Apple Bonjour is not needed |
 | Hotspot on a virtual `ap0` | Windows Mobile Hotspot, which also keeps the main Wi-Fi connected |
 | `make login-setup`, systemd user service | The Tsunagu-Pad service: the sign-in screen and the next session on the iPad |
@@ -282,14 +282,19 @@ The same program runs on Windows 10 (version 1809 or newer) and Windows 11,
 Download `Tsunagu-Pad-<version>-setup.exe` from the
 [releases page](https://github.com/khaichi11/tsunagupad/releases) and run it.
 The installer carries everything it needs, so nothing is downloaded during
-installation. It asks for the administrator password once and offers four parts:
+installation. It starts with a choice between English and Indonesian, asks for
+the administrator password once, and offers four parts:
 
 - **Tsunagu-Pad** (required): the program, the tray panel, the iPad page,
   AirPlay, and Windows Firewall rules that accept only the local subnet and
   Tailscale (`100.64.0.0/10`).
-- **Second screen**: installs the Virtual Display Driver (MIT licensed, signed
-  by SignPath Foundation for the Virtual Display Driver project). Windows may
-  ask once whether to install this device software.
+- **Second screen**: installs Tsunagu-Pad Display, Tsunagu-Pad's own virtual
+  monitor driver (`windows/driver`). It runs in user mode, not in the kernel.
+  Windows only installs drivers with a trusted signature, so the installer
+  signs it on your computer: it creates a one-time certificate, signs the
+  driver, trusts the certificate, and deletes its private key right away, so
+  nobody can sign anything else with it. Uninstalling removes the driver and
+  the certificate. No paid certificate and no third party are involved.
 - **Sign-in screen and next session**: a Windows service that does nothing
   until the switch in the panel is turned on.
 - **`tsunagupad` in PATH**, for use from a terminal or over SSH. Only a small
@@ -378,8 +383,10 @@ windows/build.sh        # dist/windows/Tsunagu-Pad-<version>-setup.exe
 ```
 
 The script builds the program and UxPlay, collects the GStreamer plugins and
-DLLs, verifies the checksum of the Virtual Display Driver release, and runs
-NSIS. GitHub Actions runs the same script on every push, installs the result
+DLLs, and runs NSIS. The second screen driver is built before that with
+Visual Studio and the WDK (`windows/driver/TsunaguPadDisplay.vcxproj`), and
+its files go into `dist/windows/driver`; without them the installer is built
+without the second screen. GitHub Actions runs the same script on every push, installs the result
 silently on a clean Windows machine, and tests the encrypted channel against
 the installed program.
 

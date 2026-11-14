@@ -110,11 +110,11 @@ exact corresponding source code, are installed in the `licenses` folder
 | FFmpeg (gst-libav) | LGPL-2.1-or-later, GPL-2.0-or-later as built by MSYS2 | Audio and video decoding for AirPlay |
 | OpenSSL, libsrtp, usrsctp | Apache-2.0, BSD-3-Clause | DTLS and SRTP for WebRTC |
 | UxPlay | GPL-3.0-or-later | Receives AirPlay screen mirroring from the iPad; runs as a separate program |
-| Virtual Display Driver | MIT | The monitor with no cable used for the second screen |
+| Tsunagu-Pad Display (`windows/driver`), based on Microsoft's IddSampleDriver from Windows-driver-samples | MS-PL | The monitor with no cable used for the second screen |
 
-These are separate files (DLLs, executables, and a driver package) used through
-their public interfaces, or separate programs started as processes; no code
-from them is copied into the files of this repository. Each can be replaced by
+These are separate files (DLLs and executables) used through their public
+interfaces, or separate programs started as processes; no code from them is
+copied into the files of this repository, except the second screen driver. Each can be replaced by
 another build of the same version. The GPL applies to x264, FFmpeg as built,
 and UxPlay as distributed in the installer; the source locations for the exact
 versions are listed in `licenses/SOURCES.txt`, as those licenses require.
@@ -123,9 +123,15 @@ UxPlay in the installer carries one small change, in
 variable `UXPLAY_MDNS_IPV4` selects the network adapter for its mDNS
 announcements, so the iPad can find the receiver over the Windows hotspot.
 
-The Virtual Display Driver is signed by SignPath Foundation on behalf of the
-Virtual Display Driver project. The installer verifies the SHA-256 checksum of
-the released archive before including it.
+The second screen driver in `windows/driver` is derived from Microsoft's
+Indirect Display driver sample and keeps its license, the Microsoft Public
+License (MS-PL), whose text is in `windows/driver/LICENSE-MS-PL.txt` and in the
+installed `licenses` folder; the rest of Tsunagu-Pad stays MIT. The driver is
+built by this repository's GitHub Actions and signed on the computer it is
+installed on, with a one-time certificate whose private key is deleted right
+after signing. No third party signs it. Version 0.2.0 shipped the Virtual
+Display Driver (MIT, signed by SignPath Foundation) instead; the installer
+removes it when Tsunagu-Pad had installed it.
 
 Pemasang Windows dibuat dari kode MIT yang sama, ditambah program dan pustaka di
 atas supaya tidak ada yang perlu diunduh saat memasang. Teks lisensinya dan
